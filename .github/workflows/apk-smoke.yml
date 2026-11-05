@@ -32,6 +32,8 @@ jobs:
       APK_TEST_AVD: apk_${{ matrix.mode }}
       APK_TEST_SYSTEM_IMAGE: system-images;android-${{ matrix.api }};${{ matrix.target }};${{ matrix.arch }}
       SCRCPY_PATH: /usr/bin/scrcpy
+      # CI has no physical sound card. Video/startup are tested; audio playback is not.
+      SDL_AUDIODRIVER: dummy
     steps:
       - uses: actions/checkout@v4
         with:
