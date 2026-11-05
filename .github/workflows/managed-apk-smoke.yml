@@ -8,10 +8,15 @@ on:
         type: choice
         options: [both, phone, tv]
         default: both
+      login_probe:
+        description: Check the empty protected login dialog in the native display (no credentials)
+        type: boolean
+        default: true
   push:
     branches: [feat/desktop-android-emulator]
     paths:
       - scripts/managed-apk-smoke.ts
+      - scripts/login-smoke.ts
       - .github/workflows/managed-apk-smoke.yml
 
 permissions:
@@ -28,6 +33,7 @@ jobs:
         mode: ${{ fromJSON(inputs.mode == 'phone' && '["phone"]' || inputs.mode == 'tv' && '["tv"]' || '["phone","tv"]') }}
     env:
       APK_TEST_MODE: ${{ matrix.mode }}
+      APK_LOGIN_PROBE: ${{ github.event_name == 'push' && '1' || inputs.login_probe && '1' || '0' }}
       # CI has no sound card. This preserves video while making no audio claim.
       SDL_AUDIODRIVER: dummy
     steps:
@@ -51,6 +57,9 @@ jobs:
           sudo udevadm settle --timeout=30
           sudo chmod a+rw /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm || { echo '::error title=Host virtualization prerequisite::The runner user cannot read/write /dev/kvm after configuration'; exit 1; }
+      - name: Install small preview-image test dependency
+        if: env.APK_LOGIN_PROBE == '1'
+        run: python3 -m pip install --disable-pip-version-check 'Pillow==12.0.0'
       - name: Prepare installer-provided core archives
         run: npm run runtime:prepare
       - name: Download and verify original Maidong KTV release
@@ -62,7 +71,7 @@ jobs:
             --output "$APK_PATH"
           printf '%s  %s\n' '86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b' "$APK_PATH" | sha256sum --check --strict
       - name: Prepare and run private Android environment through application code
-        run: xvfb-run -a npx --no-install tsx scripts/managed-apk-smoke.ts
+        run: xvfb-run -a -s '-screen 0 1920x1200x24' npx --no-install tsx scripts/managed-apk-smoke.ts
       - name: Publish readable test result
         if: always()
         run: |

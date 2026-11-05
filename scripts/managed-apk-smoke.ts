@@ -19,6 +19,7 @@ import {
   type RuntimeCatalog,
 } from "../electron/managed-runtime";
 import type { DeviceMode, LibraryApp, Settings } from "../src/shared/types";
+import { captureNativeHost, probeProtectedLogin } from "./login-smoke";
 
 // Opt-in integration test: fresh private SDK, AVD and adb server. No SDK Manager,
 // host adb, pre-created emulator, fake process or rebuilt third-party APK is used.
@@ -35,7 +36,7 @@ const report: Record<string, unknown> = {
   runtimeErrors: [],
   source: "https://gitee.com/yangyachao-X/maidong-ktv/releases/tag/2.1.8",
   scope:
-    "Fresh managed-runtime preparation; embedded APK import; actual automatic boot, install, scrcpy video, foreground/process survival, D-pad key injection and uninstall. No focus movement assertion, media playback, recording, audio latency or target macOS/Windows validation.",
+    "Fresh managed-runtime preparation; embedded APK import; actual automatic boot, install, native emulator window, foreground/process survival, D-pad key injection and uninstall. No focus movement assertion, media playback, recording, audio latency or target macOS/Windows validation.",
 };
 let root: string | undefined;
 let manager: ManagedRuntime | undefined;
@@ -169,7 +170,7 @@ async function foreground(): Promise<unknown> {
   assert.equal(
     runtimeErrors.length,
     0,
-    "scrcpy reported an asynchronous failure",
+    "The runtime reported an asynchronous failure",
   );
   return { pid, resumedActivities: resumed };
 }
@@ -270,6 +271,11 @@ async function run(): Promise<void> {
     const overrides = manager.getEnvironment();
     environment = { ...process.env, ...overrides };
     report.managedEnvironment = overrides;
+    assert.equal(
+      overrides.APK_CHECKER_DISPLAY_MODE,
+      "native",
+      "Managed smoke must exercise the actual native-display configuration",
+    );
     assert(
       overrides.ADB_SERVER_SOCKET &&
         !overrides.ADB_SERVER_SOCKET.endsWith(":5037"),
@@ -423,14 +429,61 @@ async function run(): Promise<void> {
       },
     );
     await step(
-      "Launch APK with managed scrcpy and receive actual video",
+      "Launch APK in native emulator primary-display window",
       async () => {
         await runtime!.launch(item!, deviceMode, settings!, console.log);
+        // Native mode may restart the owned headless AVD on another console port.
+        await discoverDevice();
+        assert(serial, "Native AVD was not rediscovered after launch");
+        const windowType = await command(adb, [
+          "-s",
+          serial,
+          "emu",
+          "avd",
+          "windowtype",
+        ]);
+        assert(
+          windowType
+            .split(/\r?\n/)
+            .some((line) => line.trim() === "windowtype=qtwindow"),
+          `Expected primary Qt display, got: ${windowType}`,
+        );
         await new Promise((resolve) => setTimeout(resolve, 5000));
         await screenshot("01-startup.png");
-        return foreground();
+        const host = await captureNativeHost(
+          {
+            artifacts,
+            avd: deviceMode === "phone" ? settings!.phoneAvd : settings!.tvAvd,
+            shell,
+            command,
+            screenshot,
+          },
+          "01-native-startup",
+        );
+        report.nativeDisplay = {
+          windowType: "qtwindow",
+          hostWindow: host.window,
+          capturedAt: host.capturedAt,
+        };
+        return {
+          nativeDisplay: report.nativeDisplay,
+          foreground: await foreground(),
+        };
       },
     );
+    if (process.env.APK_LOGIN_PROBE === "1") {
+      report.loginProbe = await step(
+        "Verify protected empty login form in native display without credentials",
+        () =>
+          probeProtectedLogin({
+            artifacts,
+            avd: deviceMode === "phone" ? settings!.phoneAvd : settings!.tvAvd,
+            shell,
+            command,
+            screenshot,
+          }),
+      );
+    }
     await step(
       "Inject direction keys and verify APK survives in foreground",
       async () => {
@@ -573,6 +626,8 @@ async function run(): Promise<void> {
         ).map(({ name, status, durationMs }) => ({ name, status, durationMs })),
         runtime: report.runtime,
         deviceProperties: report.deviceProperties,
+        nativeDisplay: report.nativeDisplay,
+        loginProbe: report.loginProbe,
         preparationProgress: report.preparationProgress,
         privateProcessesBeforeShutdown: report.privateProcessesBeforeShutdown,
         privateProcessesImmediatelyAfterShutdown:

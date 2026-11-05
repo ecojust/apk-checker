@@ -354,6 +354,7 @@ export class ManagedRuntime {
       ANDROID_AVD_HOME: path.join(this.root, "avds"),
       ANDROID_USER_HOME: path.join(this.root, "home"),
       ANDROID_EMULATOR_HOME: path.join(this.root, "home"),
+      APK_CHECKER_DISPLAY_MODE: "native",
       SCRCPY_SERVER_PATH: path.join(path.dirname(settings.scrcpyPath), "scrcpy-server"),
       // adb treats an explicit numeric host as remote and will not auto-start
       // a daemon. "localhost" retains local startup on this dedicated port.

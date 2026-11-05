@@ -2,9 +2,11 @@
 
 用于管理和运行 Android APK 的桌面应用，面向 **macOS Apple Silicon、macOS Intel 和 Windows x64**。导入后在软件库选择手机或电视模式安装；安装成功的应用显示在对应桌面，点击即可打开独立显示窗口。
 
-**0.2.1 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
+**0.2.2 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
 
-界面使用 Electron + React，Android 运行由 Emulator 提供。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
+界面使用 Electron + React，Android 运行由 Emulator 提供。0.2.2 默认使用模拟器原生窗口，支持麦动这类禁止投屏的安全登录弹窗；修复证据见[安全登录说明](docs/testing/secure-login.md)。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
+
+上一版已验证安装包（0.2.1）：[Apple Silicon Mac](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429630602) · [Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429311377) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429855318)。CI 产物保留 14 天，包含安装包和 SHA-256 校验文件；可按文末命令重新构建。
 
 ## 首次使用
 
@@ -60,7 +62,9 @@ codesign --verify --deep --strict --verbose=2 "/Applications/APK Checker.app"
 xattr -dr com.apple.quarantine "/Applications/APK Checker.app"
 ```
 
-上述操作不需要 `sudo`，不关闭全局 Gatekeeper。若校验和或签名核验失败，应重新下载并替换该应用，而不是扩大解除隔离的范围。构建产物中的 `mac-verification.json` 记录签名、DMG 完整性、实际启动及 Gatekeeper 评估结果。已完成的 0.1.1 原生验收见[打包修复报告](docs/testing/macos-0.1.1.md)；0.2.0 需要重新构建验证，不能沿用旧版结果。
+上述操作不需要 `sudo`，不关闭全局 Gatekeeper。若校验和或签名核验失败，应重新下载并替换该应用，而不是扩大解除隔离的范围。构建产物中的 `mac-verification.json` 记录签名、DMG 完整性、实际启动及 Gatekeeper 评估结果。已完成的原生验收及手机／电视完整流程见[0.2.1 运行环境报告](docs/testing/managed-runtime.md)；旧版记录见[打包修复报告](docs/testing/macos-0.1.1.md)。
+
+后台安装后的第一次打开会保存并重启同一个模拟器，以显示原生窗口，APK 和数据会保留。后续会复用该模式的原生窗口；如果已最小化，可从 Dock／任务栏恢复。关闭原生窗口会退出对应模拟器，再次打开应用会自动启动。
 
 ## 软件库与本地数据
 
@@ -91,7 +95,7 @@ npm test
 npm run build
 ```
 
-自动化覆盖内置 APK 解析、软件库持久化、运行环境准备与模式隔离。验证范围及待验项目见 [0.2.0 运行环境记录](docs/testing/managed-runtime.md)。原版麦动 KTV 2.1.8 的既有 Linux 模拟器结果见[APK 测试报告](docs/testing/maidong-2.1.8.md)；旧版测试不能代替新托管环境或 macOS / Windows 上的真实 APK、媒体播放和性能验收。
+自动化覆盖内置 APK 解析、软件库持久化、运行环境准备与模式隔离。验证范围及待验项目见 [0.2.1 运行环境记录](docs/testing/managed-runtime.md)。原版麦动 KTV 2.1.8 的既有 Linux 模拟器结果见[APK 测试报告](docs/testing/maidong-2.1.8.md)；旧版测试不能代替新托管环境或 macOS / Windows 上的真实 APK、媒体播放和性能验收。
 
 当前保留 Electron 实现。Tauri 2 + Rust 是减少管理界面开销的候选方案，尚未迁移，也没有据此声称已改善内存、帧率或延迟；Android 虚拟化、ARM 转译和 APK 本身的负载需要分别测量。
 

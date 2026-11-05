@@ -1056,4 +1056,336 @@ describe("AndroidRuntime", () => {
     expect(status.issues.join("\n")).toContain("spawn adb ENOENT");
     expect(status.issues.join("\n")).toContain("退出代码：ENOENT");
   });
+  function nativeRuntimeFixture(reportError = vi.fn()) {
+    const environment = {
+      APK_CHECKER_DISPLAY_MODE: "native",
+      ANDROID_AVD_HOME: join(directory, "private-avds"),
+      ADB_SERVER_SOCKET: "tcp:localhost:24567",
+      ANDROID_ADB_SERVER_PORT: "24567",
+    };
+    runtime = new AndroidRuntime(reportError, environment);
+    const children: {
+      child: ChildProcess;
+      avd: string;
+      serial: string;
+      native: boolean;
+    }[] = [];
+    const live = new Map<string, (typeof children)[number]>();
+    const events: string[] = [];
+    const normal = output;
+    output = (args) => {
+      if (args[0] === "devices")
+        return [...live.keys()].map((serial) => `${serial}\tdevice`).join("\n");
+      if (args.includes("emu")) {
+        const target = live.get(args[1]);
+        if (args.includes("windowtype"))
+          return `windowtype=${target?.native ? "qtwindow" : "headless"}\nOK\n`;
+        if (args.includes("name"))
+          return `${target?.avd || "not-running"}\nOK\n`;
+        if (args.includes("kill")) return "OK: killing emulator, bye bye\nOK\n";
+      }
+      return normal(args);
+    };
+    processMocks.spawn.mockImplementation((_file, args) => {
+      const target = {
+        child: fakeChild(),
+        avd: args[args.indexOf("-avd") + 1],
+        serial: `emulator-${args[args.indexOf("-port") + 1]}`,
+        native: !args.includes("-no-window"),
+      };
+      children.push(target);
+      live.set(target.serial, target);
+      events.push(target.native ? "native-spawn" : "headless-spawn");
+      target.child.on("exit", () => {
+        if (live.get(target.serial) === target) live.delete(target.serial);
+        events.push(target.native ? "native-exit" : "headless-exit");
+      });
+      return target.child;
+    });
+    processMocks.execFile.mockImplementation(
+      (_file, args, _options, callback) => {
+        const target = live.get(args[1]);
+        const response = output(args);
+        callback(null, response, "");
+        if (args.includes("emu") && args.includes("kill")) {
+          queueMicrotask(() => target?.child.emit("exit", 0, null));
+        }
+      },
+    );
+    return { children, events, environment, reportError };
+  }
+
+  it("switches its installed headless device to a native Qt window only after the old process exits", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+    await rm(settings.scrcpyPath);
+    const progress = vi.fn();
+    await runtime.launch(app, "phone", settings, progress);
+    expect(fixture.events).toEqual([
+      "headless-spawn",
+      "headless-exit",
+      "native-spawn",
+    ]);
+    expect(fixture.children.map((child) => child.avd)).toEqual([
+      settings.phoneAvd,
+      settings.phoneAvd,
+    ]);
+    expect(
+      processMocks.spawn.mock.calls.every(
+        (call) =>
+          call[0] === join(settings.sdkPath, "emulator", exe("emulator")),
+      ),
+    ).toBe(true);
+    expect(processMocks.spawn.mock.calls[0][1]).toContain("-no-window");
+    expect(processMocks.spawn.mock.calls[1][1]).not.toContain("-no-window");
+    expect(processMocks.spawn.mock.calls[1][1]).not.toContain(
+      "-qt-hide-window",
+    );
+    expect(processMocks.spawn.mock.calls[1][1]).not.toContain("-wipe-data");
+    expect(processMocks.spawn.mock.calls[1][2]).toMatchObject({
+      windowsHide: false,
+      env: expect.objectContaining(fixture.environment),
+    });
+    expect(
+      processMocks.execFile.mock.calls.filter((call) =>
+        call[1].includes("install"),
+      ),
+    ).toHaveLength(1);
+    expect(progress).toHaveBeenCalledWith("示例应用 已在模拟器原生窗口打开。");
+    expect(fixture.reportError).not.toHaveBeenCalled();
+    const status = await runtime.getStatus(settings);
+    expect(status.scrcpyFound).toBe(false);
+    expect(status.issues).toEqual([]);
+  });
+
+  it("reuses an owned native device, wakes it again and restarts natively after its window closes", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await runtime.launch(app, "phone", settings, vi.fn());
+    expect(fixture.children).toHaveLength(1);
+    expect(fixture.children[0].native).toBe(true);
+    expect(
+      processMocks.execFile.mock.calls.filter((call) =>
+        call[1].includes("KEYCODE_WAKEUP"),
+      ),
+    ).toHaveLength(2);
+    expect(
+      processMocks.execFile.mock.calls.filter((call) =>
+        call[1].includes("kill"),
+      ),
+    ).toHaveLength(0);
+    fixture.children[0].child.emit("exit", 0, null);
+    await runtime.launch(app, "phone", settings, vi.fn());
+    expect(fixture.children).toHaveLength(2);
+    expect(fixture.children[1].native).toBe(true);
+    expect(fixture.reportError).not.toHaveBeenCalled();
+  });
+
+  it("opens native TV with its leanback launcher and never starts scrcpy", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "tv", settings, vi.fn());
+    expect(fixture.children[0]).toMatchObject({
+      avd: settings.tvAvd,
+      native: true,
+    });
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("android.intent.category.LEANBACK_LAUNCHER"),
+      ),
+    ).toBe(true);
+    expect(
+      processMocks.spawn.mock.calls.some(
+        (call) => call[0] === settings.scrcpyPath,
+      ),
+    ).toBe(false);
+  });
+
+  it("never stops an externally owned headless device to convert its display", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      APK_CHECKER_DISPLAY_MODE: "native",
+    });
+    const normal = output;
+    output = (args) =>
+      args.includes("windowtype") ? "windowtype=headless\nOK\n" : normal(args);
+    await expect(
+      runtime.launch(app, "phone", settings, vi.fn()),
+    ).rejects.toThrow("当前模拟器没有可显示的窗口");
+    expect(processMocks.spawn).not.toHaveBeenCalled();
+    expect(
+      processMocks.execFile.mock.calls.some((call) => call[1].includes("kill")),
+    ).toBe(false);
+  });
+
+  it("can reuse an external Qt device without claiming ownership or stopping it", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      APK_CHECKER_DISPLAY_MODE: "native",
+    });
+    const normal = output;
+    output = (args) =>
+      args.includes("windowtype") ? "windowtype=qtwindow\nOK\n" : normal(args);
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await runtime.dispose();
+    expect(processMocks.spawn).not.toHaveBeenCalled();
+    expect(
+      processMocks.execFile.mock.calls.some((call) => call[1].includes("kill")),
+    ).toBe(false);
+  });
+
+  it("rejects unknown native window status before launching the APK", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    output = (args) =>
+      args.includes("windowtype") ? "KO: unknown command\n" : normal(args);
+    await expect(
+      runtime.launch(app, "phone", settings, vi.fn()),
+    ).rejects.toThrow("原生窗口未就绪");
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("start"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not boot a second device if the old headless process cannot be stopped", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+    const old = fixture.children[0].child;
+    vi.mocked(old.kill).mockReturnValue(false);
+    const normal = processMocks.execFile.getMockImplementation()!;
+    processMocks.execFile.mockImplementation(
+      (file, args, options, callback) => {
+        if (args.includes("emu") && args.includes("kill"))
+          callback(new Error("console unavailable"), "", "");
+        else normal(file, args, options, callback);
+      },
+    );
+    vi.useFakeTimers();
+    const opening = runtime.launch(app, "phone", settings, vi.fn());
+    const rejected = expect(opening).rejects.toThrow("无法确认模拟器");
+    await vi.waitFor(() =>
+      expect(
+        processMocks.execFile.mock.calls.some((call) =>
+          call[1].includes("kill"),
+        ),
+      ).toBe(true),
+    );
+    await vi.advanceTimersByTimeAsync(6000);
+    await rejected;
+    expect(fixture.children).toHaveLength(1);
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("start"),
+      ),
+    ).toBe(false);
+    // The failed transition retained ownership; cleanup can still stop this process.
+    old.emit("exit", 0, null);
+  });
+
+  it("reports a native window process failure without reporting APK launch success", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnNative = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnNative(file, args, options) as ChildProcess;
+      queueMicrotask(() => {
+        child.stderr?.emit(
+          "data",
+          Buffer.from("Qt platform initialization failed"),
+        );
+        child.emit("exit", 1, null);
+      });
+      return child;
+    });
+    const progress = vi.fn();
+    await expect(
+      runtime.launch(app, "phone", settings, progress),
+    ).rejects.toThrow("启动失败");
+    expect(progress).not.toHaveBeenCalledWith(
+      "示例应用 已在模拟器原生窗口打开。",
+    );
+    expect(fixture.reportError).toHaveBeenCalledWith(
+      expect.stringContaining("Qt platform initialization failed"),
+    );
+  });
+
+  it("waits for an in-progress headless transition on quit and does not start its native replacement", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+    const normal = processMocks.execFile.getMockImplementation()!;
+    processMocks.execFile.mockImplementation(
+      (file, args, options, callback) => {
+        if (args.includes("emu") && args.includes("kill"))
+          callback(null, "OK\n", "");
+        else normal(file, args, options, callback);
+      },
+    );
+    const opening = runtime.launch(app, "phone", settings, vi.fn());
+    const cancelled = expect(opening).rejects.toThrow("正在退出");
+    await vi.waitFor(() =>
+      expect(
+        processMocks.execFile.mock.calls.some((call) =>
+          call[1].includes("kill"),
+        ),
+      ).toBe(true),
+    );
+    let stopped = false;
+    const stopping = runtime.dispose().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("kill-server"),
+      ),
+    ).toBe(false);
+    fixture.children[0].child.emit("exit", 0, null);
+    await cancelled;
+    await stopping;
+    expect(fixture.children).toHaveLength(1);
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("kill-server"),
+      ),
+    ).toBe(true);
+  });
+  it("does not spawn a native emulator after quitting during port selection", async () => {
+    const fixture = nativeRuntimeFixture();
+    let releasePort!: (port: number) => void;
+    const selectingPort = vi
+      .spyOn(runtime as unknown as { freePort(): Promise<number> }, "freePort")
+      .mockImplementation(
+        () =>
+          new Promise<number>((resolvePort) => {
+            releasePort = resolvePort;
+          }),
+      );
+    const opening = runtime.launch(app, "phone", settings, vi.fn());
+    const cancelled = expect(opening).rejects.toThrow("正在退出");
+    await vi.waitFor(() => expect(selectingPort).toHaveBeenCalledOnce());
+    await runtime.dispose();
+    releasePort(5554);
+    await cancelled;
+    selectingPort.mockRestore();
+    expect(fixture.children).toHaveLength(0);
+    expect(processMocks.spawn).not.toHaveBeenCalled();
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("start"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not spawn a native emulator if a startup progress callback requests exit", async () => {
+    const fixture = nativeRuntimeFixture();
+    const progress = vi.fn((message: string) => {
+      if (message.startsWith("正在启动")) void runtime.dispose();
+    });
+    await expect(
+      runtime.launch(app, "phone", settings, progress),
+    ).rejects.toThrow("正在退出");
+    await runtime.dispose();
+    expect(progress).toHaveBeenCalledWith(expect.stringContaining("正在启动"));
+    expect(fixture.children).toHaveLength(0);
+    expect(processMocks.spawn).not.toHaveBeenCalled();
+  });
 });

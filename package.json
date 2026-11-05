@@ -1,6 +1,6 @@
 {
   "name": "apk-checker",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Android application library and phone / TV emulator desktop",
   "main": "dist-electron/main.js",

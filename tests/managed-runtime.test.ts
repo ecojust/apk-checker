@@ -172,6 +172,7 @@ describe("managed emulator preparation", () => {
     expect(settings.phoneAvd).toBe("APKChecker_Phone_30_x86_64");
     expect(await readFile(path.join(settings.sdkPath, "platform-tools", "adb"), "utf8")).toBe("fixture:adb");
     const environment = manager.getEnvironment();
+    expect(environment.APK_CHECKER_DISPLAY_MODE).toBe("native");
     expect(environment.ADB_SERVER_SOCKET).toMatch(/^tcp:localhost:\d+$/);
     expect(environment.ADB_SERVER_SOCKET).not.toBe("tcp:localhost:5037");
     expect(environment.ANDROID_AVD_HOME).toBe(path.join(directory, "managed-runtime", "avds"));

@@ -25,6 +25,7 @@ interface OwnedEmulator {
   adb: string;
   serial: string;
   avd: string;
+  nativeWindow: boolean;
 }
 
 function messageOf(error: unknown): string {
@@ -74,10 +75,14 @@ function run(
               : "",
             error.signal ? `信号：${error.signal}` : "",
             error.message ? error.message.slice(-1500) : "",
-          ].filter(Boolean).join("\n");
-          reject(new Error(
-            `${error.killed ? "命令被终止或执行超时：" : ""}${details || "命令执行失败，未返回诊断信息。"}`,
-          ));
+          ]
+            .filter(Boolean)
+            .join("\n");
+          reject(
+            new Error(
+              `${error.killed ? "命令被终止或执行超时：" : ""}${details || "命令执行失败，未返回诊断信息。"}`,
+            ),
+          );
         } else resolveOutput(stdout);
       },
     );
@@ -85,8 +90,11 @@ function run(
 }
 
 function childHasExited(child: ChildProcess): boolean {
-  return child.pid === undefined ||
-    child.exitCode !== null || child.signalCode !== null;
+  return (
+    child.pid === undefined ||
+    child.exitCode !== null ||
+    child.signalCode !== null
+  );
 }
 
 function waitForChildExit(
@@ -156,12 +164,14 @@ function configuredAvd(
 
 export class AndroidRuntime {
   private ownedEmulators = new Map<string, OwnedEmulator>();
+  private stoppingEmulators = new Set<Promise<void>>();
   private windows = new Map<string, ChildProcess>();
   private disposed = false;
   private disposal?: Promise<void>;
 
   private readonly environment: NodeJS.ProcessEnv;
   private readonly privateAvdHome: boolean;
+  private readonly nativeDisplay: boolean;
   private readonly privateAdbSocket?: string;
   private readonly adbExecutables = new Set<string>();
   private usedPrivateAdb?: string;
@@ -172,6 +182,7 @@ export class AndroidRuntime {
   ) {
     this.environment = { ...process.env, ...envOverrides };
     this.privateAvdHome = Boolean(envOverrides.ANDROID_AVD_HOME);
+    this.nativeDisplay = envOverrides.APK_CHECKER_DISPLAY_MODE === "native";
     // Only a manager-supplied nondefault loopback socket is ours to shut down.
     // An inherited ADB_SERVER_SOCKET (or the normal 5037 server) is never owned.
     const socket = envOverrides.ADB_SERVER_SOCKET;
@@ -371,7 +382,7 @@ export class AndroidRuntime {
           ? "内置模拟器尚未准备完成。"
           : "缺少 Android Emulator。",
       );
-    if (!scrcpy)
+    if (!this.nativeDisplay && !scrcpy)
       status.issues.push(
         this.privateAvdHome
           ? "内置显示组件尚未准备完成。"
@@ -494,6 +505,7 @@ export class AndroidRuntime {
     settings: Settings,
     mode: DeviceMode,
     progress: Progress,
+    requireNativeWindow = false,
   ): Promise<{ adb: string; serial: string; avd: string }> {
     this.assertActive();
     const avd = configuredAvd(settings, mode, this.privateAvdHome);
@@ -505,10 +517,33 @@ export class AndroidRuntime {
           : `找不到虚拟设备「${avd}」，请在运行环境中重新选择。`,
       );
     await this.checkDeviceMode(avd, mode);
-    const devices = await this.devices(adb);
+    let devices = await this.devices(adb);
+    const previous = this.ownedEmulators.get(avd);
+    if (requireNativeWindow && previous && !previous.nativeWindow) {
+      progress("正在保存模拟器状态并打开原生窗口…");
+      // -no-window selects a headless executable without Qt. Its process must
+      // fully exit before the same AVD can be opened with the native display.
+      this.ownedEmulators.delete(avd);
+      try {
+        await this.stopEmulator(previous);
+      } catch (error) {
+        if (!childHasExited(previous.child))
+          this.ownedEmulators.set(avd, previous);
+        throw error;
+      }
+      this.assertActive();
+      devices = (await this.devices(adb)).filter(
+        (device) => device.serial !== previous.serial,
+      );
+    }
     const existing = devices.find(
       (device) => device.avd === avd && device.state === "device",
     );
+    if (requireNativeWindow && existing && !this.ownedEmulators.has(avd)) {
+      // A matching device may have been started by another program. Never
+      // stop it merely to change display modes.
+      await this.assertNativeWindow(adb, existing.serial, false);
+    }
     let serial = existing?.serial;
     let child: ChildProcess | undefined;
     let processError = "";
@@ -528,16 +563,32 @@ export class AndroidRuntime {
       progress(
         `正在启动${mode === "phone" ? "手机" : "电视"}虚拟设备「${avd}」，首次启动可能需要几分钟…`,
       );
+      // Port discovery and progress callbacks may yield to application exit.
+      // Recheck immediately before creating a process, with no await in between.
+      this.assertActive();
       child = spawn(
         emulator,
-        ["-avd", avd, "-port", String(port), "-no-window", "-no-boot-anim"],
+        [
+          "-avd",
+          avd,
+          "-port",
+          String(port),
+          ...(requireNativeWindow ? [] : ["-no-window"]),
+          "-no-boot-anim",
+        ],
         {
           stdio: ["ignore", "ignore", "pipe"],
-          windowsHide: true,
+          windowsHide: !requireNativeWindow,
           env: this.environment,
         },
       );
-      this.ownedEmulators.set(avd, { child, adb, serial, avd });
+      this.ownedEmulators.set(avd, {
+        child,
+        adb,
+        serial,
+        avd,
+        nativeWindow: requireNativeWindow,
+      });
       child.stderr?.on("data", (data) => {
         processError = (processError + String(data)).slice(-3000);
       });
@@ -555,9 +606,12 @@ export class AndroidRuntime {
         processError = [
           `退出代码：${code ?? "无"}${signal ? `，信号：${signal}` : ""}`,
           processError,
-        ].filter(Boolean).join("\n");
+        ]
+          .filter(Boolean)
+          .join("\n");
         if (
-          stillOwned && !this.disposed &&
+          stillOwned &&
+          !this.disposed &&
           (signal || (code !== null && code !== 0))
         ) {
           this.onRuntimeError?.(`模拟器「${avd}」意外退出：${processError}`);
@@ -592,7 +646,14 @@ export class AndroidRuntime {
           throw new Error(
             `虚拟设备启动失败：${processError || "模拟器进程已退出。"}`,
           );
-        if (booted.trim() === "1") return { adb, serial, avd };
+        if (booted.trim() === "1") {
+          if (requireNativeWindow)
+            await this.assertNativeWindow(adb, serial, true);
+          this.assertActive();
+          if (child && childHasExited(child))
+            throw new Error("模拟器窗口已关闭，请重新打开应用。");
+          return { adb, serial, avd };
+        }
       }
       await new Promise((resolveWait) => setTimeout(resolveWait, 1200));
     }
@@ -608,6 +669,25 @@ export class AndroidRuntime {
         ? "模拟器启动超时（3 分钟）。请检查系统硬件虚拟化支持，重启应用后重试。"
         : "虚拟设备启动超时（3 分钟）。请检查硬件虚拟化、系统镜像架构，或先在 Android Studio 中启动此 AVD。",
     );
+  }
+
+  private async assertNativeWindow(
+    adb: string,
+    serial: string,
+    managed: boolean,
+  ): Promise<void> {
+    const output = await this.run(
+      adb,
+      ["-s", serial, "emu", "avd", "windowtype"],
+      5000,
+    );
+    if (!/^windowtype=qtwindow\s*$/m.test(output)) {
+      throw new Error(
+        managed
+          ? "模拟器原生窗口未就绪，请关闭该模拟器后重新打开应用。"
+          : "当前模拟器没有可显示的窗口，请先关闭它再重试。",
+      );
+    }
   }
 
   async install(
@@ -657,18 +737,36 @@ export class AndroidRuntime {
     onProgress: Progress,
   ): Promise<void> {
     this.assertInstalled(app, mode, settings);
-    const scrcpy = await this.scrcpyPath(settings);
-    if (!scrcpy)
+    const scrcpy = this.nativeDisplay ? "" : await this.scrcpyPath(settings);
+    if (!this.nativeDisplay && !scrcpy)
       throw new Error(
         this.privateAvdHome
           ? "内置显示组件缺失，请重新准备运行环境。"
           : "未找到 scrcpy。请先安装 scrcpy，并在运行环境中设置可执行文件路径。",
       );
-    const { adb, serial } = await this.ensureDevice(settings, mode, onProgress);
-    // Android 11 audio capture requires an unlocked foreground screen. These
-    // commands affect only the explicitly selected emulator and cannot unlock a PIN.
-    await this.run(adb, ["-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP"]).catch(() => undefined);
-    await this.run(adb, ["-s", serial, "shell", "wm", "dismiss-keyguard"]).catch(() => undefined);
+    const { adb, serial, avd } = await this.ensureDevice(
+      settings,
+      mode,
+      onProgress,
+      this.nativeDisplay,
+    );
+    const nativeSession = this.ownedEmulators.get(avd);
+    // Wake only the selected emulator. This cannot unlock a PIN-protected screen.
+    await this.run(adb, [
+      "-s",
+      serial,
+      "shell",
+      "input",
+      "keyevent",
+      "KEYCODE_WAKEUP",
+    ]).catch(() => undefined);
+    await this.run(adb, [
+      "-s",
+      serial,
+      "shell",
+      "wm",
+      "dismiss-keyguard",
+    ]).catch(() => undefined);
     const category =
       mode === "tv"
         ? "android.intent.category.LEANBACK_LAUNCHER"
@@ -719,26 +817,29 @@ export class AndroidRuntime {
       throw new Error(`启动应用失败：${output.trim()}`);
     }
     this.assertActive();
+    if (this.nativeDisplay) {
+      if (nativeSession && childHasExited(nativeSession.child)) {
+        throw new Error("模拟器窗口已关闭，请重新打开应用。");
+      }
+      onProgress(`${app.name} 已在模拟器原生窗口打开。`);
+      return;
+    }
     const previous = this.windows.get(serial);
     if (previous) {
       this.windows.delete(serial);
       previous.kill();
     }
     const display = displayCommand(scrcpy, [
-        "--serial",
-        serial,
-        "--window-title",
-        `${app.name} · ${mode === "phone" ? "手机模式" : "电视模式"} · APK Checker`,
-      ]);
-    const child = spawn(
-      display.file,
-      display.args,
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-        env: { ...this.environment, ADB: adb },
-      },
-    );
+      "--serial",
+      serial,
+      "--window-title",
+      `${app.name} · ${mode === "phone" ? "手机模式" : "电视模式"} · APK Checker`,
+    ]);
+    const child = spawn(display.file, display.args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: { ...this.environment, ADB: adb },
+    });
     this.windows.set(serial, child);
     let diagnostics = "";
     let started = false;
@@ -757,10 +858,7 @@ export class AndroidRuntime {
       }, 15_000);
       const onOutput = (data: Buffer) => {
         diagnostics = (diagnostics + String(data)).slice(-4000);
-        if (
-          !settled &&
-          hasVideoTexture(diagnostics)
-        ) {
+        if (!settled && hasVideoTexture(diagnostics)) {
           settled = true;
           started = true;
           clearTimeout(timer);
@@ -825,7 +923,17 @@ export class AndroidRuntime {
     onProgress(`${app.name} 已卸载。`);
   }
 
-  private async stopEmulator(owned: OwnedEmulator): Promise<void> {
+  private stopEmulator(owned: OwnedEmulator): Promise<void> {
+    const stopping = this.stopEmulatorProcess(owned);
+    this.stoppingEmulators.add(stopping);
+    void stopping.then(
+      () => this.stoppingEmulators.delete(stopping),
+      () => this.stoppingEmulators.delete(stopping),
+    );
+    return stopping;
+  }
+
+  private async stopEmulatorProcess(owned: OwnedEmulator): Promise<void> {
     if (childHasExited(owned.child)) return;
     let gracefulShutdown = false;
     // Verify the AVD identity before issuing a shutdown: never stop an externally owned device.
@@ -855,7 +963,8 @@ export class AndroidRuntime {
     }
     // The console acknowledgement precedes snapshot writes and process exit.
     // Keep the directory and private ADB server alive until QEMU has stopped.
-    if (gracefulShutdown && await waitForChildExit(owned.child, 15_000)) return;
+    if (gracefulShutdown && (await waitForChildExit(owned.child, 15_000)))
+      return;
     if (childHasExited(owned.child)) return;
     // Windows emulator.exe launches QEMU; terminating only the launcher leaves QEMU running.
     const windowsProcessTree = process.platform === "win32" && owned.child.pid;
@@ -886,9 +995,11 @@ export class AndroidRuntime {
     this.windows.clear();
     const owned = [...this.ownedEmulators.values()];
     this.ownedEmulators.clear();
-    this.disposal = Promise.allSettled(
-      owned.map((emulator) => this.stopEmulator(emulator)),
-    ).then(async (results) => {
+    const shutdowns = new Set([
+      ...this.stoppingEmulators,
+      ...owned.map((emulator) => this.stopEmulator(emulator)),
+    ]);
+    this.disposal = Promise.allSettled(shutdowns).then(async (results) => {
       if (this.privateAdbSocket && this.usedPrivateAdb) {
         // Use the exact binary and private environment previously invoked here.
         await this.run(this.usedPrivateAdb, ["kill-server"], 3000, true).catch(

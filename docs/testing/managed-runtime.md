@@ -145,3 +145,26 @@ APK_PATH=/absolute/path/Maidong-KTV-2.1.8.apk APK_TEST_MODE=phone \
 测试修正仅允许这一精确参数形式的 watchdog 最多 25 秒自然结束，其他残留进程仍立即失败；等待后仍要求所有私有进程严格为空，再删除测试数据。报告记录即时进程列表、watchdog 等待时间和最终进程列表；关停不确认时继续保留数据。该修正不改产品关停实现，也不放宽安装、视频或前台检查，后续工作流结果需另行追加。
 
 本次只验证 Linux CI 下的应用后端和 Android 视频窗口链路；未验证 Mac／Windows 上实际 APK 运行、每个方向键对应的焦点移动、歌曲播放、录音或音频延迟。CI dummy 音频设备不作为真实音频能力的证据。
+
+## 0.2.1 最终托管流程验收通过
+
+源码 `6f2e2b3` 的[最终托管流程 42054618011](https://github.com/ecojust/apk-checker/actions/runs/42054618011) 已完成，**手机和电视两个 job 均为 success**，两份实际测试摘要均为 `status: passed`。本次重新创建独立应用目录，重新经过原版 APK SHA-256 校验、内置解析、运行环境下载／校验／解包、私有 AVD 创建和实际自动启动，没有复用上一轮已安装应用或模拟成功结果。
+
+两组均通过以下完整流程：
+
+1. 导入原版麦动 2.1.8，验证重复导入及元数据。
+2. 记录测试许可接受，通过真实管理器准备所选镜像及私有设备。
+3. 自动启动 AVD、实际安装 APK，并验证桌面安装标记持久化。
+4. 通过随包 scrcpy 收到实际视频，检查麦动进程存活和前台入口。
+5. 注入四个方向键，再次检查前台／进程并生成截图。
+6. 实际卸载 APK，确认包和桌面标记已移除。
+7. 关闭测试设备及显示进程；精确 watchdog 自然结束后，最终私有进程列表严格为空，再清理临时数据。
+
+手机仍为 API 30、`APKChecker_Phone_30_x86_64`，实际 ABI 为 `x86_64,x86,arm64-v8a,armeabi-v7a,armeabi`；电视仍为 API 36、`APKChecker_TV_36_x86_64`，实际 ABI 为 `x86_64,arm64-v8a`。两组均报告 `libndk_translation.so`。关停后的 watchdog 等待实际分别为手机 **511 ms**、电视 **1,029 ms**，最终 `privateProcessesAfterShutdown` 均为 `[]`，没有因关停失败保留私有数据。这些等待值只是本次 CI 清理证据，不是产品性能承诺。
+
+可下载的截图、logcat、APK 元数据、AVD 配置、宿主诊断和 `summary.json`：
+
+- [手机测试报告](https://github.com/ecojust/apk-checker/actions/runs/42054618011/artifacts/13429210902)
+- [电视测试报告](https://github.com/ecojust/apk-checker/actions/runs/42054618011/artifacts/13428541861)
+
+两份 artifact 保留 14 天；对应 job 的 `Managed phone/tv test stages` annotation 同时保留精简步骤及设备／关停证据。归档不包含 APK 或 Android 系统镜像。本轮成功不覆盖前面各轮失败记录，也不扩展为 Mac／Windows 上实际 APK 验收、人工检查所有界面、焦点移动正确性、媒体播放、录音或音频延迟已经通过。
