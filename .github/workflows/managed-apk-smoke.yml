@@ -60,6 +60,13 @@ jobs:
       - name: Install small preview-image test dependency
         if: env.APK_LOGIN_PROBE == '1'
         run: python3 -m pip install --disable-pip-version-check 'Pillow==12.0.0'
+      - name: Install native emulator host audio library
+        run: |
+          if ! python3 -c 'import ctypes; ctypes.CDLL("libpulse.so.0")'; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends libpulse0
+          fi
+          python3 -c 'import ctypes; ctypes.CDLL("libpulse.so.0")'
       - name: Prepare installer-provided core archives
         run: npm run runtime:prepare
       - name: Download and verify original Maidong KTV release

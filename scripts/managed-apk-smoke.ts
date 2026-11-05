@@ -538,6 +538,13 @@ async function run(): Promise<void> {
             settings!,
             console.log,
           );
+          // A failed native launch may have stopped the old device; uninstall
+          // can boot the same private AVD again on a different serial.
+          await discoverDevice();
+          assert(
+            serial,
+            "Uninstalled private AVD was not rediscovered for verification",
+          );
           await library!.markUninstalled(item!.id, mode as DeviceMode);
           assert.equal(
             library!.getApp(item!.id).installed[mode as DeviceMode],
