@@ -20,16 +20,22 @@ jobs:
             os: macos-latest
             package: --mac dmg --arm64
             artifact: APK-Checker-macOS-arm64
+            arch: arm64
           - name: macOS Intel
             os: macos-15-intel
             package: --mac dmg --x64
             artifact: APK-Checker-macOS-x64
+            arch: x64
           - name: Windows x64
             os: windows-latest
             package: --win nsis --x64
             artifact: APK-Checker-Windows-x64
+            arch: x64
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # Only ad-hoc signing is used here: no Apple certificate or private key.
+      # electron-builder otherwise skips even ad-hoc signing in PR builds.
+      CSC_FOR_PULL_REQUEST: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,8 +48,15 @@ jobs:
         run: npm test
       - name: Typecheck and build
         run: npm run build
-      - name: Package unsigned installer
+      - name: Package installer with ad-hoc macOS bundle signing
         run: npx electron-builder ${{ matrix.package }} --publish never
+      - name: Verify mounted macOS installer and launch the packaged application
+        if: runner.os == 'macOS'
+        env:
+          EXPECTED_MAC_ARCH: ${{ matrix.arch }}
+        run: node scripts/verify-macos-package.mjs
+      - name: Write installer SHA-256 checksums
+        run: node scripts/write-artifact-checksums.mjs
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
@@ -51,5 +64,15 @@ jobs:
           path: |
             release/*.dmg
             release/*.exe
+            release/SHA256SUMS.txt
+            release/mac-verification.*
           if-no-files-found: error
+          retention-days: 14
+      - name: Upload macOS verification diagnostics on failure
+        if: failure() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-diagnostics
+          path: release/mac-verification.*
+          if-no-files-found: ignore
           retention-days: 14

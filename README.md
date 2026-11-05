@@ -16,6 +16,32 @@
 
 同一模式中的应用共用一台 Android 虚拟设备。打开另一款应用会切换设备的前台应用并替换该设备的显示窗口；它们不是每款应用各自独立的 Android 实例。手机和电视使用不同 AVD，可以同时运行。关闭显示窗口不会卸载应用；完全退出 APK Checker 会关闭由它启动的显示窗口和模拟器，不会关闭预先由其他程序启动的模拟器。
 
+## macOS 安装与「已损坏」提示
+
+从本仓库的构建产物下载对应芯片版本：Apple Silicon 使用 `macOS-arm64`，Intel 使用 `macOS-x64`。解压后先在产物目录核验下载完整性：
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+确认通过后打开 DMG，将 `APK Checker.app` 拖入「应用程序」，替换旧版。0.1.1 起对完整应用包和 Chromium 辅助程序执行 ad-hoc 签名；CI 会挂载实际 DMG、核验签名，并在对应架构的 macOS 主机上启动包内应用、验证界面和 IPC。0.1.0 的构建关闭了自动签名，却未明确重新签名修改后的 Electron 应用包，应换用新包。
+
+ad-hoc 签名保证包内代码签名完整性，**不等于 Developer ID 签名或 Apple 公证**。首次下载仍可能被 Gatekeeper 拦截。提示无法验证开发者时，在尝试打开后前往「系统设置 → 隐私与安全性 → 仍要打开」。
+
+如果来自本仓库、校验和通过的新包仍提示「已损坏」，先核验安装后的应用：
+
+```sh
+codesign --verify --deep --strict --verbose=2 "/Applications/APK Checker.app"
+```
+
+签名核验通过、仍被下载隔离属性拦截时，可只对这份可信应用移除隔离属性后重新打开：
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/APK Checker.app"
+```
+
+上述操作不需要 `sudo`，不关闭全局 Gatekeeper。若校验和或签名核验失败，应重新下载并替换该应用，而不是扩大解除隔离的范围。构建产物中的 `mac-verification.json` 记录签名、DMG 完整性、实际启动及 Gatekeeper 评估结果。
+
 ## 首次配置
 
 ### 1. 安装 Android SDK
@@ -112,6 +138,8 @@ npm run build
 
 单元测试覆盖软件库持久化、APK 元数据和运行时关键逻辑；模拟器的真实安装、启动和输入仍需在配置好 SDK 的目标系统中验证。
 
+已用原版麦动 KTV 2.1.8 进行实际 APK 导入和 Android 模拟器测试，结果及兼容性限制见[测试报告](docs/testing/maidong-2.1.8.md)。这不替代 macOS / Windows 实机性能和音视频播放测试。
+
 ## 构建安装包
 
 在 macOS 上构建对应架构的 DMG：
@@ -131,7 +159,7 @@ npx electron-builder --win nsis --x64 --publish never
 
 产物位于 `release/`。这三个产物分别面向 macOS Apple Silicon、macOS Intel 和 Windows x64，不是包含 Android 系统镜像的一体化安装包。
 
-[GitHub Actions 构建工作流](.github/workflows/build.yml) 会运行测试并生成这三种安装包作为 workflow artifacts，**不会自动发布 Release**。仓库尚未配置 macOS 签名、公证或 Windows 代码签名；当前产物用于开发测试，正式分发前需要补充各平台签名配置和实机验收。
+[GitHub Actions 构建工作流](.github/workflows/build.yml) 会运行测试并生成这三种安装包及 SHA-256 校验文件作为 workflow artifacts，**不会自动发布 Release**。macOS 使用 ad-hoc 签名并执行 DMG、签名和原生启动检查；仓库尚未配置 Developer ID 签名、Apple 公证或 Windows 代码签名。当前产物用于开发测试，正式分发前仍需相应签名配置和实机验收。
 
 ## 项目结构
 

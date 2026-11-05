@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { version as appVersion } from "../package.json";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -439,7 +440,7 @@ function App() {
           </button>
           <div className="version">
             <span>APK Checker</span>
-            <span>v0.1.0</span>
+            <span>v{appVersion}</span>
           </div>
         </div>
       </aside>
