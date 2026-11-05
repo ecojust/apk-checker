@@ -172,3 +172,11 @@ APK_PATH=/absolute/path/Maidong-KTV-2.1.8.apk APK_TEST_MODE=phone \
 - [电视测试报告](https://github.com/ecojust/apk-checker/actions/runs/42054618011/artifacts/13428541861)
 
 两份 artifact 保留 14 天；对应 job 的 `Managed phone/tv test stages` annotation 同时保留精简步骤及设备／关停证据。归档不包含 APK 或 Android 系统镜像。本轮成功不覆盖前面各轮失败记录，也不扩展为 Mac／Windows 上实际 APK 验收、人工检查所有界面、焦点移动正确性、媒体播放、录音或音频延迟已经通过。
+
+## 0.2.3 原生安装包验收
+
+生产源码 `4e11d39` 的[run 42068331626 / attempt 2](https://github.com/ecojust/apk-checker/actions/runs/42068331626) 三平台全部 success。ARM Mac／Intel Mac 各 216 项测试通过；Windows 214 项通过、2 项按平台跳过。三平台便携工具、私有 ADB 启停通过；两种 Mac 通过 DMG、严格签名、复制后签名、实际应用启动、renderer／IPC／托管首次使用检查，启动后包内容未变。
+
+[ARM Mac](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13436507367) · [Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13434049459) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13433619176)。均为正式原生构建产物，未使用交叉构建备用包；仍不等同于 Apple 公证。Android 输入／登录的实际结果见专项记录。
+
+第一次 attempt 的 ARM job 没有执行任何步骤，GitHub 报 `The job was not acquired by Runner of type hosted even after multiple attempts` 及容量限制；只重跑 ARM，保留此前 Intel／Windows 成功结果。官方 Actions 服务事件同期从 investigating 转为 monitoring。该基础设施失败继续保留，不能写成客户端代码失败。

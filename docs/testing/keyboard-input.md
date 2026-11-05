@@ -45,3 +45,5 @@ Chromium 1040×720 中已实际执行六组交互：组合输入确认不发送�
 `4e11d39` 的[run 42068324515](https://github.com/ecojust/apk-checker/actions/runs/42068324515) 两组均完成安装、原生窗口、卸载与私有进程清理，但整体失败。手机的三条输入路径在 `search_input.focused` 检查处停止，**没有调用生产 gRPC 输入接口**；因此不能把它报告为字符传输失败或成功。原版源码的 `prepareTvFocusableTree`／`TvFocusStyler.install` 会设置 `isFocusableInTouchMode=false`，正在用有界 Tab 导航核实真实键盘焦点。电视被 Android 的旧 targetSdk 提示遮住，尚未进入搜索框检查。
 
 后续探针只确认已知系统提示的 OK 按钮，并在发送前要求搜索框实际获得焦点；不会删除焦点断言或把方向键注入当作成功。Emoji 的 Android 检查明确未执行。
+
+0.2.3 三平台原生构建已通过，源提交 `4e11d39`，具体安装包及平台检查见[原生包验收](managed-runtime.md#023-原生安装包验收)。`3b351c2` 的第二轮手机检查已实证：Tab 导航后搜索框获得键盘焦点，宿主 XTest `abc123` 严格读回通过；后续虚拟清空按钮点击未清空，生产文字发送未执行。下一轮改用宿主 Ctrl+A／Backspace，并优先验证生产文字路径，仍保留清空与输入结果断言。

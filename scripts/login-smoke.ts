@@ -153,12 +153,12 @@ import base64, io, json, sys
 from PIL import Image
 im=Image.open(sys.argv[1]).convert('RGB')
 x,y,w,h=map(int,sys.argv[2:6]); im=im.crop((x,y,x+w,y+h))
-im.thumbnail((1100,700))
+im.thumbnail((900,600))
 quality=75
 while True:
     data=io.BytesIO(); im.save(data,format='JPEG',quality=quality,optimize=True)
     raw=data.getvalue()
-    if len(raw)<=38000: break
+    if len(raw)<=8000: break
     if quality>35: quality-=10
     else: im.thumbnail((int(im.width*0.85),int(im.height*0.85))); quality=65
     if im.width<160: raise RuntimeError('Cannot create a bounded login preview')
@@ -175,7 +175,7 @@ print(json.dumps(dict(mimeType='image/jpeg',width=im.width,height=im.height,byte
       String(host.window.height),
     ]),
   );
-  assert(preview.bytes <= 38000 && preview.base64.length <= 51000);
+  assert(preview.bytes <= 8000 && preview.base64.length <= 11000);
   const { base64: encodedImage, ...imageMetadata } = preview;
   const metadata = {
     ...imageMetadata,
@@ -515,11 +515,8 @@ export async function probeProtectedLogin(
       settingsHost.window.width / settingsHost.window.height) /
       (settingsImage.width / settingsImage.height) < 0.1;
     if (!aligned()) {
-      await publishHostPreview(context, settingsHost, "Native display before alignment preview", {
-        credentialsEntered: false,
-        guestWidth: settingsImage.width,
-        guestHeight: settingsImage.height,
-      });
+      // Keep the initial screenshot in the artifact. Publish only the final
+      // form (or failure state) to stay within GitHub's ten notices per step.
       const reciprocalDifference = Math.abs(settingsImage.width / settingsImage.height -
         settingsHost.window.height / settingsHost.window.width) /
         (settingsImage.width / settingsImage.height);
@@ -667,7 +664,28 @@ export async function probeProtectedLogin(
           result.failureHostCaptureError = String(captureError).slice(0, 1500);
         });
     }
-    publishProbeDiagnostic("Native login probe diagnostic", result);
+    publishProbeDiagnostic("Native login probe diagnostic", {
+      status: result.status,
+      error: String(result.error).slice(0, 280),
+      guestCapture: result.guestCapture && {
+        status: (result.guestCapture as Record<string, unknown>).status,
+        error: String((result.guestCapture as Record<string, unknown>).error ?? "").slice(0, 300),
+        redactionVerified: (result.guestCapture as Record<string, unknown>).redactionVerified,
+      },
+      hostPreviewCaptured: result.hostPreviewCaptured,
+      nativeEditTextCount: result.nativeEditTextCount,
+      inputRegionPixels: result.inputRegionPixels,
+      failureHostWindow: result.failureHostWindow,
+      failureHostCaptureError: result.failureHostCaptureError && String(result.failureHostCaptureError).slice(0, 300),
+      observedUi: Array.isArray(result.lastUi)
+        ? result.lastUi.slice(0, 6).map((node) => ({
+            id: node.id,
+            text: node.text?.slice(0, 40),
+            bounds: node.bounds,
+          }))
+        : undefined,
+      fullDiagnosticArtifact: "login-probe.json",
+    });
     throw error;
   } finally {
     if (dialogOpened)

@@ -6,7 +6,7 @@
 
 界面使用 Electron + React，Android 运行由 Emulator 提供。从 0.2.2 起默认使用模拟器原生窗口，用于显示麦动这类禁止投屏的安全登录弹窗；修复证据见[安全登录说明](docs/testing/secure-login.md)。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
 
-上一版已验证安装包（0.2.1）：[Apple Silicon Mac](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429630602) · [Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429311377) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429855318)。CI 产物保留 14 天，包含安装包和 SHA-256 校验文件；可按文末命令重新构建。
+0.2.3 安装包（已通过三平台构建及两种 Mac 客户端原生启动）：[Apple Silicon Mac](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13436507367) · [Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13434049459) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13433619176)。CI 产物保留 14 天，包含安装包和 SHA-256 校验文件；可按文末命令重新构建。
 
 ## 首次使用
 
@@ -70,7 +70,7 @@ xattr -dr com.apple.quarantine "/Applications/APK Checker.app"
 
 如果电脑输入法的候选文字没有进入 Android 输入框，可在 0.2.3 中：
 
-1. 先在模拟器里点中要填写的输入框。
+1. 先在模拟器里选中要填写的输入框，确认光标出现。麦动等电视软件可能需要使用 Tab／方向键获得键盘焦点，单击不一定生效。
 2. 回到 APK Checker 的对应手机／电视桌面，点击“输入文字”。
 3. 用电脑键盘和输入法写好内容，点击“发送文字”。确认文字已进入模拟器后，再操作软件的搜索或登录按钮。
 

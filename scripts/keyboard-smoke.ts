@@ -49,8 +49,8 @@ X.XSendEvent.argtypes=[D,W,C.c_int,C.c_long,C.POINTER(Event)]
 X.XPending.argtypes=[D]; X.XNextEvent.argtypes=[D,C.POINTER(Event)]
 X.XConnectionNumber.argtypes=[D]; X.XConnectionNumber.restype=C.c_int
 mode=sys.argv[1]; window=int(sys.argv[2]); text=sys.argv[3]
-assert mode in ('ascii','clipboard')
-assert text == ('abc123' if mode=='ascii' else '\u6d4b\u8bd5123'), 'Only public probe text is permitted'
+assert mode in ('ascii','clipboard','clear')
+assert text == {'ascii':'abc123','clipboard':'\u6d4b\u8bd5123','clear':''}[mode], 'Only public probe text is permitted'
 display=X.XOpenDisplay(None)
 if not display: raise RuntimeError('Cannot connect to the private Xvfb DISPLAY')
 owner=0; held=set(); served=[]; sent=[]
@@ -71,6 +71,10 @@ try:
     if mode=='ascii':
         for character in text:
             key(character,True); time.sleep(0.03); key(character,False); time.sleep(0.05)
+    elif mode=='clear':
+        key('Control_L',True); key('a',True); key('a',False); key('Control_L',False)
+        time.sleep(0.1)
+        key('BackSpace',True); key('BackSpace',False)
     else:
         atom=lambda name: X.XInternAtom(display,name.encode('ascii'),False)
         clipboard=atom('CLIPBOARD'); utf8=atom('UTF8_STRING'); targets=atom('TARGETS'); atom_type=atom('ATOM')
@@ -178,25 +182,51 @@ async function tap(context: LoginProbeContext, node: Node): Promise<void> {
 async function focusEmptySearch(
   context: LoginProbeContext,
   name: string,
+  detail: Record<string, unknown>,
 ): Promise<void> {
   let nodes = await ui(context, `${name}-before-clear`);
-  const clear = find(nodes, "key_clear");
-  assert(clear, "Maidong search clear action was not found");
-  await tap(context, clear);
-  nodes = await ui(context, `${name}-cleared`);
-  const input = find(nodes, "search_input");
+  let input = find(nodes, "search_input");
   assert(
     input?.class === "android.widget.EditText" && input.password !== "true",
     "Only the public Maidong search EditText may receive probe text",
   );
+  // Keep existing keyboard focus. Tapping Maidong's clear action entered touch
+  // mode and did not clear the real CI field, despite its source onClick handler.
+  if (input.focused !== "true") await tap(context, input);
+  await focusSearchWithNavigation(context, name, detail);
+  nodes = await ui(context, `${name}-before-delete`);
+  input = find(nodes, "search_input");
+  assert(input?.focused === "true" && input.password !== "true");
+  const empty = (node: Node) =>
+    !node.text ||
+    node.text === node.hint ||
+    node.text === "搜索  输入首字母搜索";
+  if (!empty(input)) {
+    const clearing: Record<string, unknown> = { before: input.text };
+    detail.clearing = clearing;
+    await assertSearchFocused(context, `${name}-clear`);
+    const host = await captureNativeHost(context, `${name}-before-clear-host`);
+    assert(
+      host.window.title.includes(context.avd),
+      "Search clearing requires the exact private test AVD window",
+    );
+    clearing.transport = JSON.parse(
+      await context.command(
+        "python3",
+        ["-c", X11_KEYBOARD, "clear", String(host.window.id), ""],
+        15_000,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    nodes = await ui(context, `${name}-cleared`);
+    input = find(nodes, "search_input");
+    clearing.actual = input?.text;
+  }
   // UIAutomator may report the hint as text when the input is empty.
   assert(
-    !input.text ||
-      input.text === input.hint ||
-      input.text === "搜索  输入首字母搜索",
+    input?.class === "android.widget.EditText" && empty(input),
     "Search was not cleared before host keyboard input",
   );
-  await tap(context, input);
 }
 
 async function focusSearchWithNavigation(
@@ -284,6 +314,68 @@ async function assertSearchFocused(
   );
 }
 
+function compactDiagnostic(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const record = (value: unknown) =>
+    value as Record<string, unknown> | undefined;
+  const clip = (value: unknown, bytes: number) => {
+    if (value === undefined) return undefined;
+    let text = "";
+    for (const character of String(value)) {
+      if (Buffer.byteLength(text + character, "utf8") > bytes) break;
+      text += character;
+    }
+    return text;
+  };
+  for (const budget of [160, 96, 48, 24]) {
+    const compact: Record<string, unknown> = {
+      status: result.status,
+      searchCleared: result.searchCleared,
+      homeRestored: result.homeRestored,
+      fullDiagnostic: "keyboard-probe.json",
+    };
+    for (const stage of ["ascii", "clipboard", "productionText"]) {
+      const detail = record(result[stage]);
+      const focus = detail?.focusNavigation as
+        Record<string, unknown>[] | undefined;
+      const checks = detail?.checks as Record<string, unknown>[] | undefined;
+      compact[stage] = {
+        status: detail?.status,
+        expected: clip(detail?.expected, budget),
+        actual: clip(detail?.actual, budget),
+        error: clip(detail?.error, budget),
+        clearing: detail?.clearing && {
+          before: clip(record(detail.clearing)?.before, budget),
+          actual: clip(record(detail.clearing)?.actual, budget),
+        },
+        focus: focus?.slice(-2).map((entry) => ({
+          step: entry.step,
+          key: entry.keySent,
+          focused: (entry.focused as Record<string, unknown>[] | undefined)
+            ?.slice(0, 1)
+            .map((node) => clip(node.resourceId, 64)),
+          searchFocused: record(entry.search)?.focused,
+        })),
+        checks: checks?.slice(0, 6).map((check) => ({
+          expected: clip(check.expected, budget),
+          actual: clip(check.actual, budget),
+        })),
+      };
+    }
+    compact.errors = (result.errors as { stage: string; error: string }[])
+      .slice(0, 6)
+      .map(({ stage, error }) => ({ stage, error: clip(error, budget) }));
+    if (Buffer.byteLength(JSON.stringify(compact), "utf8") <= 3400)
+      return compact;
+  }
+  return {
+    status: result.status,
+    diagnosticTruncated: true,
+    fullDiagnostic: "keyboard-probe.json",
+  };
+}
+
 /** Opt-in Linux/Xvfb integration probe. Requires a clean, running native AVD. */
 export async function probeHostKeyboard(
   context: KeyboardProbeContext,
@@ -332,34 +424,9 @@ export async function probeHostKeyboard(
     assert(search, "Maidong home search action was not found");
     await tap(context, search);
     searchOpened = true;
-    for (const [mode, text] of [
-      ["ascii", "abc123"],
-      ["clipboard", "测试123"],
-    ] as const) {
-      await run(mode, async (detail) => {
-        const name = `keyboard-${mode}`;
-        await focusEmptySearch(context, name);
-        await focusSearchWithNavigation(context, name, detail);
-        await assertSearchFocused(context, name);
-        const host = await captureNativeHost(context, `${name}-before`);
-        assert(
-          host.window.title.includes(context.avd),
-          "Host keyboard events require a window belonging to the exact private test AVD",
-        );
-        detail.transport = JSON.parse(
-          await context.command(
-            "python3",
-            ["-c", X11_KEYBOARD, mode, String(host.window.id), text],
-            15_000,
-          ),
-        );
-        await verifySearchText(context, name, text, detail);
-      });
-    }
     if (context.sendText) {
       await run("productionText", async (detail) => {
-        await focusEmptySearch(context, "keyboard-production");
-        await focusSearchWithNavigation(context, "keyboard-production", detail);
+        await focusEmptySearch(context, "keyboard-production", detail);
         const checks: Record<string, unknown>[] = [];
         detail.transport =
           "production sendText callback; no host keyboard event substitution";
@@ -397,6 +464,29 @@ export async function probeHostKeyboard(
         status: "not-run",
         reason: "No production sendText callback was supplied",
       };
+    for (const [mode, text] of [
+      ["ascii", "abc123"],
+      ["clipboard", "测试123"],
+    ] as const) {
+      await run(mode, async (detail) => {
+        const name = `keyboard-${mode}`;
+        await focusEmptySearch(context, name, detail);
+        await assertSearchFocused(context, name);
+        const host = await captureNativeHost(context, `${name}-before`);
+        assert(
+          host.window.title.includes(context.avd),
+          "Host keyboard events require a window belonging to the exact private test AVD",
+        );
+        detail.transport = JSON.parse(
+          await context.command(
+            "python3",
+            ["-c", X11_KEYBOARD, mode, String(host.window.id), text],
+            15_000,
+          ),
+        );
+        await verifySearchText(context, name, text, detail);
+      });
+    }
     result.productionEmoji = {
       status: "not-run",
       reason:
@@ -412,13 +502,28 @@ export async function probeHostKeyboard(
     );
   } finally {
     if (searchOpened) {
+      const cleanup: Record<string, unknown> = {};
+      result.cleanup = cleanup;
       try {
-        await focusEmptySearch(context, "keyboard-cleanup");
+        await focusEmptySearch(context, "keyboard-cleanup", cleanup);
         result.searchCleared = true;
+      } catch (error) {
+        cleanup.error = String(error);
+        errors.push({ stage: "cleanup", error: String(error) });
+      }
+      // Keep restoration independent from clearing, so a failed input probe
+      // cannot leave the later empty-login probe stranded on the search page.
+      try {
+        for (let back = 0; back < 2; back++) {
+          const nodes = await ui(context, `keyboard-restore-${back}`);
+          if (!find(nodes, "search_input")) break;
+          await context.shell("input", "keyevent", "KEYCODE_BACK");
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
         await prepareKtvHome(context, "keyboard-restored-home");
         result.homeRestored = true;
       } catch (error) {
-        errors.push({ stage: "cleanup", error: String(error) });
+        errors.push({ stage: "restore-home", error: String(error) });
       }
     }
     result.status = errors.length ? "failed" : "passed";
@@ -427,7 +532,10 @@ export async function probeHostKeyboard(
       path.join(context.artifacts, "keyboard-probe.json"),
       JSON.stringify(result, null, 2),
     );
-    publishProbeDiagnostic("Native keyboard probe diagnostic", result);
+    publishProbeDiagnostic(
+      "Native keyboard probe diagnostic",
+      compactDiagnostic(result),
+    );
   }
   assert.equal(
     errors.length,

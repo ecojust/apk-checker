@@ -502,6 +502,17 @@ async function run(): Promise<void> {
     }
     if (process.env.APK_LOGIN_PROBE === "1") {
       try {
+        if (process.env.APK_KEYBOARD_PROBE === "1")
+          await step("Reset test APK activity between independent UI probes", async () => {
+            const previousForeground = await foreground().catch(String);
+            await shell("am", "force-stop", item!.packageName);
+            await runtime!.launch(item!, deviceMode, settings!, console.log);
+            await discoverDevice();
+            assert(serial, "Private AVD was not rediscovered after test activity reset");
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            return { previousForeground, currentForeground: await foreground(),
+              apkDataCleared: false, reason: "Reset only the fresh test APK activity before the independent login probe" };
+          });
         report.loginProbe = await step(
           "Verify protected empty login form in native display without credentials",
           () => probeProtectedLogin({
@@ -662,23 +673,32 @@ async function run(): Promise<void> {
     if (process.env.GITHUB_ACTIONS) {
       // Keep concise evidence accessible through the checks API when artifact
       // blob downloads are unavailable to a reviewer. No environment secrets.
+      const keyboard = report.keyboardProbe as Record<string, unknown> | undefined;
+      const login = report.loginProbe as Record<string, unknown> | undefined;
       const diagnosticData = {
         status: report.status,
         steps: (
           report.steps as { name: string; status: string; durationMs: number }[]
-        ).map(({ name, status, durationMs }) => ({ name, status, durationMs })),
-        runtime: report.runtime,
+        ).map(({ name, status, durationMs }) => ({ name: name.slice(0, 55), status, durationMs })),
         deviceProperties: report.deviceProperties,
         nativeDisplay: report.nativeDisplay,
-        keyboardProbe: report.keyboardProbe,
-        loginProbe: report.loginProbe,
-        preparationProgress: report.preparationProgress,
-        privateProcessesBeforeShutdown: report.privateProcessesBeforeShutdown,
-        privateProcessesImmediatelyAfterShutdown:
-          report.privateProcessesImmediatelyAfterShutdown,
+        keyboardProbe: keyboard && { status: keyboard.status },
+        loginProbe: login && { status: login.status,
+          nativeEditTextCount: login.nativeEditTextCount,
+          secureWindowCount: Array.isArray(login.secureWindows) ? login.secureWindows.length : 0,
+          inputRegionPixels: login.inputRegionPixels,
+          guestCapture: login.guestCapture && {
+            status: (login.guestCapture as Record<string, unknown>).status,
+            error: String((login.guestCapture as Record<string, unknown>).error ?? "").slice(0, 300),
+            redactionVerified: (login.guestCapture as Record<string, unknown>).redactionVerified,
+          },
+          nativeRotationCount: Array.isArray(login.nativeDisplayRotations) ? login.nativeDisplayRotations.length : 0,
+          dialogDismissed: login.dialogDismissed,
+        },
         privateShutdownWatchdogWaitMs: report.privateShutdownWatchdogWaitMs,
         privateProcessesAfterShutdown: report.privateProcessesAfterShutdown,
         retainedPrivateDataPath: report.retainedPrivateDataPath,
+        fullDiagnosticArtifact: "summary.json",
       };
       publishProbeDiagnostic(`Managed ${mode} test stages`, diagnosticData);
     }
