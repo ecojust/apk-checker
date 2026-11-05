@@ -30,7 +30,7 @@ function listening(port: number): Promise<boolean> {
 
 async function verifyLiveLogs(executable: string, env: NodeJS.ProcessEnv): Promise<void> {
   if (process.platform === "win32") return;
-  const invocation = displayCommand(executable, ["--pause-on-exit=always", "--apk-checker-test-invalid-option"]);
+  const invocation = displayCommand(executable, ["--pause-on-exit=true", "--apk-checker-test-invalid-option"]);
   const child = spawn(invocation.file, invocation.args, { env, stdio: ["pipe", "pipe", "pipe"] });
   let descendants: number[] = [];
   try {
@@ -44,7 +44,9 @@ async function verifyLiveLogs(executable: string, env: NodeJS.ProcessEnv): Promi
       child.once("error", error => { clearTimeout(timer); reject(error); });
       child.once("exit", () => { clearTimeout(timer); reject(new Error("Probe exited before live logs were confirmed")); });
     });
-    assert.equal(child.exitCode, null, "The real scrcpy probe must still be alive when logs arrive");
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(child.exitCode, null, "The real scrcpy probe must remain alive after logs arrive");
+    assert.equal(child.signalCode, null);
     if (process.platform === "darwin") {
       const result = await promisify(execFile)("/usr/bin/pgrep", ["-P", String(child.pid)]);
       descendants = result.stdout.trim().split(/\s+/).map(Number);
