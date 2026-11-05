@@ -63,17 +63,21 @@ def key(name,down):
     if not XT.XTestFakeKeyEvent(display,code,int(down),0): raise RuntimeError('XTest key injection failed')
     if down: held.add(code)
     else: held.discard(code)
-    X.XFlush(display); sent.append(dict(key=name,down=bool(down),code=code))
+    X.XSync(display,0); sent.append(dict(key=name,down=bool(down),code=code))
 try:
     values=[C.c_int() for _ in range(4)]
     if not XT.XTestQueryExtension(display,*[C.byref(v) for v in values]): raise RuntimeError('XTest extension is unavailable')
     X.XRaiseWindow(display,window); X.XSetInputFocus(display,window,2,0); X.XSync(display,0)
     focused=W(); revert=C.c_int(); X.XGetInputFocus(display,C.byref(focused),C.byref(revert))
     if focused.value!=window: raise RuntimeError('Native emulator window did not gain X11 keyboard focus')
-    time.sleep(0.15)
+    # Wait for native-window activation before the fixed public input sequence.
+    # XSync confirms X-server submission; actual Android text is asserted later.
+    time.sleep(0.4)
+    X.XGetInputFocus(display,C.byref(focused),C.byref(revert))
+    if focused.value!=window: raise RuntimeError('Native emulator window lost X11 focus before keyboard input')
     if mode=='ascii':
         for character in text:
-            key(character,True); time.sleep(0.03); key(character,False); time.sleep(0.05)
+            key(character,True); time.sleep(0.10); key(character,False); time.sleep(0.14)
     elif mode=='clipboard':
         atom=lambda name: X.XInternAtom(display,name.encode('ascii'),False)
         clipboard=atom('CLIPBOARD'); utf8=atom('UTF8_STRING'); targets=atom('TARGETS'); atom_type=atom('ATOM')
@@ -107,7 +111,10 @@ try:
                 X.XSendEvent(display,request.requestor,False,0,C.byref(response)); X.XFlush(display)
         # Qt may synchronize the host selection to Android before the paste key.
         serve(0.6)
-        key('Control_L',True); key('v',True); key('v',False); key('Control_L',False)
+        key('Control_L',True); time.sleep(0.16)
+        key('v',True); time.sleep(0.10)
+        key('v',False); time.sleep(0.12)
+        key('Control_L',False)
         serve(2.0)
         if 'UTF8_STRING' not in served: raise RuntimeError('Native window did not request the UTF-8 host clipboard payload')
     X.XSync(display,0)
