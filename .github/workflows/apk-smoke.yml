@@ -2,6 +2,12 @@ name: Test Maidong KTV release APK
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Test the standard phone/TV pair or the newer 64-bit TV image"
+        type: choice
+        options: [standard, tv-modern]
+        default: standard
   push:
     branches: [feat/desktop-android-emulator]
     paths:
@@ -13,23 +19,13 @@ permissions:
 
 jobs:
   android-smoke:
-    name: Maidong 2.1.8 / ${{ matrix.mode }}
+    name: Maidong 2.1.8 / ${{ matrix.mode }} API ${{ matrix.api }} ${{ matrix.arch }}
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - mode: phone
-            api: 30
-            target: google_apis
-            arch: x86_64
-            profile: pixel_2
-          - mode: tv
-            api: 31
-            target: android-tv
-            arch: x86
-            profile: tv_1080p
+        include: ${{ fromJSON(inputs.target == 'tv-modern' && '[{"mode":"tv","api":36,"target":"android-tv","arch":"x86_64","profile":"tv_1080p"}]' || '[{"mode":"phone","api":30,"target":"google_apis","arch":"x86_64","profile":"pixel_2"},{"mode":"tv","api":31,"target":"android-tv","arch":"x86","profile":"tv_1080p"}]') }}
     env:
       EXPECTED_APK_SHA256: 86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b
       APK_TEST_MODE: ${{ matrix.mode }}
