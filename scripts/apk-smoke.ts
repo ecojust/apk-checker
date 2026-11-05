@@ -229,6 +229,18 @@ async function run(): Promise<void> {
       return { duplicate: true, persisted: true };
     });
     await step("Install APK on real Android device", async () => {
+      const existingPackages = await adbShell(
+        "pm",
+        "list",
+        "packages",
+        entry!.packageName,
+      );
+      assert(
+        !existingPackages
+          .split(/\r?\n/)
+          .includes(`package:${entry!.packageName}`),
+        "Use a clean test AVD: the target package is already installed and its data must not be replaced or deleted",
+      );
       const result = await runtime.install(
         entry!,
         library!.getApkPath(entry!.id),
@@ -303,6 +315,13 @@ async function run(): Promise<void> {
     report.status = "failed";
     report.error = error instanceof Error ? error.message : String(error);
     console.error(report.error);
+    if (process.env.GITHUB_ACTIONS) {
+      const annotation = String(report.error)
+        .replaceAll("%", "%25")
+        .replaceAll("\r", "%0D")
+        .replaceAll("\n", "%0A");
+      console.log(`::error title=APK ${mode} smoke test::${annotation}`);
+    }
     process.exitCode = 1;
   } finally {
     // Capture diagnostics before uninstall removes the package/process.
@@ -350,6 +369,10 @@ async function run(): Promise<void> {
       report.shutdownError = String(error);
       process.exitCode = 1;
     });
+    if ((report.runtimeErrors as string[]).length > 0) {
+      report.status = "failed";
+      process.exitCode = 1;
+    }
     if (temporaryDirectory)
       await rm(temporaryDirectory, { recursive: true, force: true });
     report.completedAt = new Date().toISOString();

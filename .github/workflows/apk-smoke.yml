@@ -85,6 +85,17 @@ jobs:
           path: artifacts/apk-smoke-${{ matrix.mode }}/
           if-no-files-found: warn
           retention-days: 14
+      - name: Publish readable test summary
+        if: always()
+        run: |
+          REPORT="artifacts/apk-smoke-$APK_TEST_MODE/summary.json"
+          if [ -f "$REPORT" ]; then
+            echo '### Actual release APK test' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Delete downloaded APK
         if: always()
         run: rm -f "$APK_PATH"
