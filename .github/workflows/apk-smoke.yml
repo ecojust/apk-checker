@@ -32,7 +32,6 @@ jobs:
             profile: tv_1080p
     env:
       EXPECTED_APK_SHA256: 86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b
-      APK_PATH: ${{ runner.temp }}/Maidong-KTV-2.1.8.apk
       APK_TEST_MODE: ${{ matrix.mode }}
       APK_TEST_AVD: apk_${{ matrix.mode }}
       APK_TEST_SYSTEM_IMAGE: system-images;android-${{ matrix.api }};${{ matrix.target }};${{ matrix.arch }}
@@ -54,6 +53,8 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' 'platform-tools'
       - name: Download exact release APK and verify checksum
         run: |
+          APK_PATH="$RUNNER_TEMP/Maidong-KTV-2.1.8.apk"
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
           curl --fail --location --retry 4 --retry-all-errors --connect-timeout 30 --max-time 300 \
             'https://gitee.com/yangyachao-X/maidong-ktv/releases/download/2.1.8/Maidong-KTV-2.1.8.apk' \
             --output "$APK_PATH"
