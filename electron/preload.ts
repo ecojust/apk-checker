@@ -9,8 +9,10 @@ const api: ApkCheckerApi = {
   uninstallApp: (id, mode) => ipcRenderer.invoke("apk:uninstall", id, mode),
   removeApp: (id) => ipcRenderer.invoke("apk:remove", id),
   saveSettings: (settings) => ipcRenderer.invoke("apk:settings", settings),
-  choosePath: (kind) => ipcRenderer.invoke("apk:choose-path", kind),
   refreshRuntime: () => ipcRenderer.invoke("apk:runtime"),
+  prepareEnvironment: (mode, acceptLicense) => ipcRenderer.invoke("apk:prepare", mode, acceptLicense),
+  cancelPreparation: () => ipcRenderer.invoke("apk:cancel-prepare"),
+  getRuntimeLicense: () => ipcRenderer.invoke("apk:license"),
   onProgress(callback) {
     const handler = (
       _event: Electron.IpcRendererEvent,

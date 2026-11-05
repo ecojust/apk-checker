@@ -38,12 +38,25 @@ export interface AppState {
   apps: LibraryApp[];
   settings: Settings;
   runtime: RuntimeStatus;
+  managed?: ManagedRuntimeStatus;
+}
+export interface ManagedRuntimeStatus {
+  supported: boolean;
+  coreReady: boolean;
+  phoneReady: boolean;
+  tvReady: boolean;
+  licenseAccepted: boolean;
+  preparing?: DeviceMode;
+  downloadBytes: { phone: number; tv: number };
+  error?: string;
 }
 export interface OperationProgress {
   appId?: string;
   mode?: DeviceMode;
   message: string;
   kind?: "info" | "error";
+  completedBytes?: number;
+  totalBytes?: number;
 }
 export interface ActionResult {
   ok: boolean;
@@ -62,8 +75,10 @@ export interface ApkCheckerApi {
   uninstallApp(id: string, mode: DeviceMode): Promise<ActionResult>;
   removeApp(id: string): Promise<ActionResult>;
   saveSettings(settings: Settings): Promise<ActionResult>;
-  choosePath(kind: "sdk" | "scrcpy"): Promise<string | null>;
   refreshRuntime(): Promise<RuntimeStatus>;
+  prepareEnvironment(mode: DeviceMode, acceptLicense?: boolean): Promise<ActionResult>;
+  cancelPreparation(): Promise<ActionResult>;
+  getRuntimeLicense(): Promise<string>;
   onProgress(callback: (progress: OperationProgress) => void): () => void;
   onStateChanged(callback: () => void): () => void;
 }

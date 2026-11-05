@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import {
@@ -12,10 +11,9 @@ import {
   stat,
 } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import type { DeviceMode, LibraryApp, Settings } from "../src/shared/types";
 
-const execFileAsync = promisify(execFile);
+import { readApkMetadata } from "./apk-metadata";
 const MAX_APK_BYTES = 4 * 1024 ** 3;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const PACKAGE_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/;
@@ -183,6 +181,7 @@ export class AppLibrary {
     settings: { ...DEFAULT_SETTINGS },
   };
   private initialized = false;
+  private hasPersistedIndex = false;
 
   constructor(private readonly rootDir: string) {
     this.indexPath = path.join(rootDir, "library.json");
@@ -226,6 +225,7 @@ export class AppLibrary {
         settings: validateSettings(parsed.settings),
       };
       this.initialized = true;
+      this.hasPersistedIndex = true;
     } catch (error) {
       // Keep the original index in place so a second launch cannot silently appear empty.
       const backupPath = `${this.indexPath}.corrupt-${Date.now()}-${randomUUID()}.bak`;
@@ -251,6 +251,62 @@ export class AppLibrary {
     await this.commit({ ...this.state, settings: validateSettings(settings) });
   }
 
+  /**
+   * Adopt the app-managed devices without touching any Android device or APK cache.
+   * Old installation associations remain recoverable in a separate index backup.
+   * The main process serializes this migration with other library writes.
+   */
+  async adoptManagedSettings(settings: Settings): Promise<number> {
+    this.assertReady();
+    const normalized = validateSettings(settings);
+    const next: Store = structuredClone(this.state);
+    next.settings = normalized;
+    let removed = 0;
+    for (const app of next.apps) {
+      for (const mode of ["phone", "tv"] as const) {
+        const targetAvd =
+          mode === "phone" ? normalized.phoneAvd : normalized.tvAvd;
+        if (app.installed[mode] && app.installed[mode]!.avd !== targetAvd) {
+          delete app.installed[mode];
+          removed += 1;
+        }
+      }
+    }
+    const settingsChanged = (
+      Object.keys(normalized) as (keyof Settings)[]
+    ).some((key) => normalized[key] !== this.state.settings[key]);
+    if (!settingsChanged && removed === 0) return 0;
+
+    let original: Buffer | undefined;
+    try {
+      original = await readFile(this.indexPath);
+    } catch (error) {
+      // A fresh library has no index to preserve. Other backup failures abort migration.
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        this.hasPersistedIndex
+      )
+        throw error;
+    }
+    if (original !== undefined) {
+      const backupPath = `${this.indexPath}.before-managed-${Date.now()}-${randomUUID()}.bak`;
+      const handle = await open(backupPath, "wx", 0o600);
+      try {
+        await handle.writeFile(original);
+        await handle.sync();
+      } catch (error) {
+        await handle.close();
+        await rm(backupPath, { force: true }).catch(() => {});
+        throw error;
+      }
+      await handle.close();
+    }
+    // A failed commit leaves in-memory state and the original index unchanged;
+    // the completed backup is deliberately retained for recovery.
+    await this.commit(next);
+    return removed;
+  }
+
   getApp(id: string): LibraryApp {
     this.assertReady();
     const app = this.state.apps.find((entry) => entry.id === id);
@@ -264,7 +320,7 @@ export class AppLibrary {
 
   async importApk(
     sourcePath: string,
-    aaptPath: string,
+    _legacyAaptPath?: string,
   ): Promise<{ app: LibraryApp; duplicate: boolean; replaced?: boolean }> {
     this.assertReady();
     if (
@@ -311,27 +367,14 @@ export class AppLibrary {
         return { app: structuredClone(duplicate), duplicate: true };
       }
 
-      let badging: string;
+      let metadata: ApkMetadata;
       try {
-        const result = await execFileAsync(
-          aaptPath,
-          ["dump", "badging", temporaryPath],
-          {
-            timeout: 60_000,
-            maxBuffer: 8 * 1024 ** 2,
-            windowsHide: true,
-            encoding: "utf8",
-          },
-        );
-        badging = result.stdout;
+        metadata = await readApkMetadata(temporaryPath);
       } catch (error) {
-        const details =
-          (error as { stderr?: string }).stderr?.trim() || errorMessage(error);
         throw new Error(
-          `无法解析 APK，请检查 Android SDK Build-Tools 和文件完整性。${details.slice(0, 1200)}`,
+          `无法解析 APK，请检查安装包完整性。${errorMessage(error).slice(0, 1200)}`,
         );
       }
-      const metadata = parseApkBadging(badging);
       const previous = this.state.apps.find(
         (entry) => entry.packageName === metadata.packageName,
       );
@@ -429,6 +472,7 @@ export class AppLibrary {
       }
       await rename(temporaryPath, this.indexPath);
       this.state = next;
+      this.hasPersistedIndex = true;
     } finally {
       await rm(temporaryPath, { force: true }).catch(() => {});
     }

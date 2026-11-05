@@ -1,20 +1,40 @@
 # APK Checker
 
-用于管理和运行 Android APK 的桌面应用，面向 **macOS Apple Silicon、macOS Intel 和 Windows x64**。导入安装包后，在软件库中选择手机或电视模式安装；安装成功的应用显示在对应模式的桌面中，点击即可通过独立窗口操作。
+用于管理和运行 Android APK 的桌面应用，面向 **macOS Apple Silicon、macOS Intel 和 Windows x64**。导入后在软件库选择手机或电视模式安装；安装成功的应用显示在对应桌面，点击即可打开独立显示窗口。
 
-应用使用 Electron + React 构建界面，使用 **Android SDK Emulator** 运行 Android，并通过 **scrcpy** 显示和控制虚拟设备。Android SDK、系统镜像、scrcpy 和 APK 均不随安装包分发，需要先在本机准备。
+**0.2.0 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
 
-## 功能
+界面使用 Electron + React，Android 运行由 Emulator 提供。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
 
-- 批量导入 `.apk`，读取名称、包名、版本和最低 Android 版本，保存安装包副本。
-- 相同文件自动去重；软件库支持搜索和移除。
-- 手机和电视各自绑定一个 AVD，分别记录安装状态。
-- 安装时自动启动所选虚拟设备，等待 Android 就绪后执行实际安装。
-- 桌面只显示已安装到当前模式所选 AVD 的应用；支持打开和卸载。
-- 每次打开应用都会显示独立的 scrcpy 窗口，支持鼠标、键盘输入。
-- 检测 SDK、adb、Emulator、Build-Tools、scrcpy 和可用虚拟设备，显示缺失项及操作错误。
+## 首次使用
 
-同一模式中的应用共用一台 Android 虚拟设备。打开另一款应用会切换设备的前台应用并替换该设备的显示窗口；它们不是每款应用各自独立的 Android 实例。手机和电视使用不同 AVD，可以同时运行。关闭显示窗口不会卸载应用；完全退出 APK Checker 会关闭由它启动的显示窗口和模拟器，不会关闭预先由其他程序启动的模拟器。
+1. 打开客户端，点击「导入 APK」，可同时选择多个 `.apk`。无需先准备模拟器。
+2. 在软件库选择手机或电视模式并点击安装，也可先到「运行环境」准备对应模式。
+3. 首次准备时阅读许可条款并勾选同意。客户端显示预计下载量，自动准备所需文件和虚拟设备；下载可取消并重试，部分下载支持续传。
+4. 等待真实安装成功，切换到「桌面」，点击应用打开显示窗口。失败时会保留错误信息，不会将应用标记为已安装。
+5. 电视模式可使用方向键、Enter 和返回键；完整快捷键见 [scrcpy 控制文档](https://github.com/Genymobile/scrcpy/blob/master/doc/control.md)。
+
+资源优先来自 Google Android 官方下载和 scrcpy 官方发行版；Android 文件在官方源不可用时可使用腾讯镜像，始终按内置目录的固定大小和摘要校验。首次准备需要联网和足够磁盘空间，界面会提示下载量并检查可用空间。引擎和镜像合计约 1.4–1.9 GB 压缩下载，解压、缓存和 Android 用户数据还会占用更多空间，建议每种模式至少预留 25 GB；只准备需要的模式即可。准备第二种模式时会复用已有引擎。
+
+当前资源目录自动选择：
+
+| 宿主系统 | 手机模式 | 电视模式 |
+| --- | --- | --- |
+| macOS Apple Silicon | Android 11 / API 30 / ARM64 | Android TV 16 / API 36 / ARM64 |
+| macOS Intel | Android 11 / API 30 / x86_64 | Android TV 16 / API 36 / x86_64 |
+| Windows x64 | Android 11 / API 30 / x86_64 | Android TV 16 / API 36 / x86_64 |
+
+**宿主机的硬件虚拟化能力不能内置。** Mac 使用系统提供的虚拟化支持；Windows 需要 CPU 和 BIOS/UEFI 启用虚拟化，并启用可用的 Windows Hypervisor Platform。遇到加速器错误时参见 [Android Emulator 加速文档](https://developer.android.com/studio/run/emulator-acceleration)。嵌套虚拟机或不支持虚拟化的主机可能无法运行。
+
+系统准备完成后的「可离线启动」指模拟器环境，APK 自身的联网、账号或在线服务仍由应用决定。APK 的原生库架构、最低 Android 版本及电视适配也必须兼容所选系统，不能保证所有 APK 在三种宿主机上均可运行。
+
+## 窗口和模式
+
+手机与电视使用不同的私有虚拟设备（AVD），安装状态分别记录，可同时运行。电视模式使用真实电视系统，并优先选择 APK 的 `LEANBACK_LAUNCHER` 入口，没有该入口时尝试普通入口。
+
+同一模式内的应用共用一台 Android 设备。打开另一款应用会切换前台并替换该设备的显示窗口，不是一款应用一台独立 Android 实例。关闭显示窗口不会卸载应用；完全退出 APK Checker 会关闭由本程序启动的显示窗口、模拟器及私有通信服务。
+
+程序使用独立的 AVD 目录和本地 adb 服务端口，不接管 Android Studio 的设备或默认 adb 服务。0.1.x 的外部 SDK 路径和 AVD 绑定属于旧版配置；升级后保留软件库，但应用需要重新安装到新建的私有模拟器中，旧设备的数据不会自动迁移或删除。
 
 ## macOS 安装与「已损坏」提示
 
@@ -40,80 +60,19 @@ codesign --verify --deep --strict --verbose=2 "/Applications/APK Checker.app"
 xattr -dr com.apple.quarantine "/Applications/APK Checker.app"
 ```
 
-上述操作不需要 `sudo`，不关闭全局 Gatekeeper。若校验和或签名核验失败，应重新下载并替换该应用，而不是扩大解除隔离的范围。构建产物中的 `mac-verification.json` 记录签名、DMG 完整性、实际启动及 Gatekeeper 评估结果。
+上述操作不需要 `sudo`，不关闭全局 Gatekeeper。若校验和或签名核验失败，应重新下载并替换该应用，而不是扩大解除隔离的范围。构建产物中的 `mac-verification.json` 记录签名、DMG 完整性、实际启动及 Gatekeeper 评估结果。已完成的 0.1.1 原生验收见[打包修复报告](docs/testing/macos-0.1.1.md)；0.2.0 需要重新构建验证，不能沿用旧版结果。
 
-## 首次配置
+## 软件库与本地数据
 
-### 1. 安装 Android SDK
-
-安装 [Android Studio](https://developer.android.com/studio)，在 **SDK Manager → SDK Tools** 中安装：
-
-- Android SDK Platform-Tools（`adb`）
-- Android Emulator
-- Android SDK Build-Tools（`aapt` / `aapt2`，导入 APK 时用于解析元数据）
-
-记下 Android SDK Location。常见路径如下：
-
-| 系统 | 默认 SDK 路径 | 推荐系统镜像架构 |
-| --- | --- | --- |
-| macOS Apple Silicon | `~/Library/Android/sdk` | `arm64-v8a` |
-| macOS Intel | `~/Library/Android/sdk` | `x86_64` |
-| Windows x64 | `%LOCALAPPDATA%\Android\Sdk` | `x86_64` |
-
-程序会查找 `ANDROID_SDK_ROOT`、`ANDROID_HOME` 和常见 SDK 安装路径，也可以在「运行环境」中手动选择 SDK 根目录。手动选择目录时，请选择包含 `platform-tools`、`emulator` 和 `build-tools` 的目录。
-
-### 2. 创建手机和电视虚拟设备
-
-在 Android Studio 的 **Device Manager → Create Device** 中分别创建：
-
-1. 一台 Phone 设备，例如 Pixel，使用与宿主机架构匹配的 Android 系统镜像。
-2. 一台 TV 设备，使用 Android TV 或 Google TV 系统镜像。
-
-建议先在 Android Studio 中启动一次，完成系统初始化后关闭。Windows 需要启用硬件虚拟化，并按 [Android Emulator 加速文档](https://developer.android.com/studio/run/emulator-acceleration) 配置可用的虚拟化后端。
-
-**Apple Silicon 上的电视模式取决于 SDK 是否提供可运行的 ARM64 电视镜像。** 部分 Android TV 版本只提供 x86 镜像；不能把此类镜像当作 Apple Silicon 原生可用镜像。请在 SDK Manager 中确认镜像架构。没有兼容电视镜像时，仍可使用手机模式；电视模式需要换用兼容镜像或 Intel / Windows x64 主机。选择 TV 模式不会把普通手机镜像变为电视系统。
-
-APK 的原生库架构和最低 Android 版本也必须与所选系统镜像兼容；应用会显示 Android 返回的安装错误。
-
-### 3. 安装 scrcpy
-
-macOS 可以通过 [Homebrew](https://brew.sh/) 安装：
-
-```sh
-brew install scrcpy
-```
-
-Windows 请从 [scrcpy 官方发布页](https://github.com/Genymobile/scrcpy/releases) 下载并完整解压 Windows 版本，保留其依赖文件。随后在应用中选择解压目录下的 `scrcpy.exe`。
-
-程序会从 `PATH` 和常见 Homebrew 路径查找 scrcpy，也支持手动选择其**可执行文件**。macOS 从 Finder 启动时可能不会继承终端的 `PATH`，此时可选择 `/opt/homebrew/bin/scrcpy`（Apple Silicon）或 `/usr/local/bin/scrcpy`（Intel）。
-
-### 4. 在应用中绑定设备
-
-打开 APK Checker 的「运行环境」，检查 SDK 和 scrcpy，刷新检测结果，为手机和电视分别选择对应 AVD 并保存。两种模式不能绑定同一个 AVD。可以先只配置其中一种模式。
-
-## 使用流程
-
-1. 点击「导入 APK」，可同时选择多个安装包。
-2. 在「软件库」中找到应用，选择手机或电视模式并点击安装。
-3. 等待真实安装完成；首次启动模拟器可能需要几分钟。
-4. 切换到「桌面」，点击应用打开独立显示窗口。
-5. 电视模式可使用方向键和 Enter 操作焦点；鼠标右键可返回。完整快捷键参见 [scrcpy 控制文档](https://github.com/Genymobile/scrcpy/blob/master/doc/control.md)。
-
-电视模式优先使用应用的 `LEANBACK_LAUNCHER` 启动入口；没有该入口时尝试普通启动入口。应用是否支持电视界面、遥控器、横屏或特定服务，取决于 APK 本身。
-
-安装记录绑定实际 AVD 名称。更换某种模式的 AVD 后，需要将软件安装到新设备；原设备中的应用不会自动迁移。若在 Android Studio 中清空或重建了同名 AVD，请重新安装应用以恢复设备内容。
-
-## 软件库与数据
-
-- APK 副本和 `library.json` 保存在 Electron 的本地 `userData` 目录中，源 APK 不会被修改。
-- 同一包名的新 APK 会替换软件库中的旧版本并清除其桌面安装标记，避免将新版本误报为已安装。虚拟设备中的旧版本仍然保留；再次安装使用 `adb install -r` 更新，兼容升级通常保留数据。签名不一致或降级可能被 Android 拒绝。
-- 「卸载」会从所选虚拟设备移除应用及其数据；「从软件库移除」删除缓存 APK 和软件库记录，不删除原始文件。仍有安装记录时，需要先卸载再移除。
-- 目前支持单个完整 APK，不支持直接导入 AAB、APKS、XAPK 或一组拆分 APK。
-- 若索引损坏，程序会保留原文件并生成备份，显示恢复路径，不会静默重置软件库。
+- APK 副本和 `library.json` 保存在 Electron 的本地 `userData` 目录中，源 APK 不会被修改；托管运行文件与私有 AVD 保存在同一应用数据目录下。
+- 相同文件自动去重；支持搜索、移除。相同包名的新 APK 会替换库中旧版本，并清除桌面安装标记。设备中的旧版本保留，重新安装时尝试更新；签名冲突或降级可能被 Android 拒绝。
+- 「卸载」移除当前模式虚拟设备中的应用及其数据；「从软件库移除」删除缓存和库记录，不删除源文件。有安装记录时，需要先卸载再移除。
+- 只支持单个完整 APK，不直接导入 AAB、APKS、XAPK 或一组拆分 APK。
+- 索引损坏时保留原文件并生成备份，不会静默清空软件库。重复准备运行环境不会重建已有虚拟设备或清除其用户数据。
 
 ## 本地开发
 
-需要 Node.js 22.12 或更新的兼容版本、npm，以及上面的运行环境。仅运行界面和单元测试不需要 Android SDK。
+需要 Node.js 22.12 或更新的兼容版本和 npm。无需安装 Android 开发工具。
 
 ```sh
 git clone https://github.com/ecojust/apk-checker.git
@@ -122,13 +81,9 @@ npm ci
 npm run dev
 ```
 
-`npm run dev` 启动 Vite 和 Electron。Electron 中才能导入本地 APK、管理模拟器和打开应用窗口。浏览器中打开 Vite 地址可以查看界面，但不会执行 Android 操作，也不会伪造安装结果。
+`npm run dev` 启动 Vite 和 Electron。仅开发界面、导入 APK 或运行单元测试，无需下载模拟器资源；要调试安装和运行流程，先执行 `npm run runtime:prepare` 将当前平台的内部通信／显示组件准备到 `resources/runtime-bundled`，再在客户端准备所选系统。
 
-仅启动浏览器界面预览：
-
-```sh
-npm run dev:web
-```
+仅预览浏览器界面可使用 `npm run dev:web`；浏览器不会执行 Android 操作，也不会伪造安装结果。
 
 ```sh
 npm run check
@@ -136,43 +91,44 @@ npm test
 npm run build
 ```
 
-单元测试覆盖软件库持久化、APK 元数据和运行时关键逻辑；模拟器的真实安装、启动和输入仍需在配置好 SDK 的目标系统中验证。
+自动化覆盖内置 APK 解析、软件库持久化、运行环境准备与模式隔离。验证范围及待验项目见 [0.2.0 运行环境记录](docs/testing/managed-runtime.md)。原版麦动 KTV 2.1.8 的既有 Linux 模拟器结果见[APK 测试报告](docs/testing/maidong-2.1.8.md)；旧版测试不能代替新托管环境或 macOS / Windows 上的真实 APK、媒体播放和性能验收。
 
-已用原版麦动 KTV 2.1.8 进行实际 APK 导入和 Android 模拟器测试，结果及兼容性限制见[测试报告](docs/testing/maidong-2.1.8.md)。这不替代 macOS / Windows 实机性能和音视频播放测试。
+当前保留 Electron 实现。Tauri 2 + Rust 是减少管理界面开销的候选方案，尚未迁移，也没有据此声称已改善内存、帧率或延迟；Android 虚拟化、ARM 转译和 APK 本身的负载需要分别测量。
 
 ## 构建安装包
 
-在 macOS 上构建对应架构的 DMG：
+在对应目标架构的 macOS 主机上执行：
 
 ```sh
-npm run build
-npx electron-builder --mac dmg --arm64 --publish never
-npx electron-builder --mac dmg --x64 --publish never
+npm run dist -- --mac dmg --arm64 --publish never
+# Intel Mac 改用：npm run dist -- --mac dmg --x64 --publish never
 ```
 
-在 Windows 上构建 x64 安装包：
+Windows x64：
 
 ```powershell
-npm run build
-npx electron-builder --win nsis --x64 --publish never
+npm run dist -- --win nsis --x64 --publish never
 ```
 
-产物位于 `release/`。这三个产物分别面向 macOS Apple Silicon、macOS Intel 和 Windows x64，不是包含 Android 系统镜像的一体化安装包。
+`dist` 自动执行生产构建和 `runtime:prepare`，再打包。准备脚本从固定来源下载并校验 Platform-Tools、scrcpy 原始归档和许可证，打入应用资源；下载或校验失败会中止打包。它不将 Emulator 和系统镜像打入安装包。若分开调用 electron-builder，也必须先执行 `npm run build`、`npm run runtime:prepare`。
 
-[GitHub Actions 构建工作流](.github/workflows/build.yml) 会运行测试并生成这三种安装包及 SHA-256 校验文件作为 workflow artifacts，**不会自动发布 Release**。macOS 使用 ad-hoc 签名并执行 DMG、签名和原生启动检查；仓库尚未配置 Developer ID 签名、Apple 公证或 Windows 代码签名。当前产物用于开发测试，正式分发前仍需相应签名配置和实机验收。
+准备脚本默认匹配当前宿主架构。查看其他平台清单可使用 `npm run runtime:prepare -- --platform darwin --arch arm64 --dry-run`；手动跨架构构建时须明确准备相同目标的资源，原生启动验收仍需目标主机。
+
+产物位于 `release/`。[GitHub Actions](.github/workflows/build.yml) 为两种 Mac 和 Windows x64 生成安装包及 SHA-256 校验文件作为 workflow artifacts，不自动发布 Release。macOS 继续使用 ad-hoc 签名和 DMG／签名／原生启动检查；未配置 Developer ID、Apple 公证或 Windows 代码签名。新增运行环境需要在新版产物上重新验收。
 
 ## 项目结构
 
 ```text
-electron/main.ts       窗口、IPC、原生文件选择与操作调度
-electron/preload.ts    受限的前端调用接口
-electron/library.ts    APK 解析、缓存、安装记录与本地持久化
-electron/android.ts    SDK 检测、AVD 启动、adb 操作与 scrcpy 窗口
-src/                  React 桌面、软件库与运行环境界面
-src/shared/types.ts   前后端共享类型
-tests/                自动化测试
+electron/main.ts             窗口、受限 IPC 与操作调度
+electron/apk-metadata.ts     内置二进制 Manifest 和资源解析
+electron/library.ts          APK 缓存、安装记录与原子持久化
+electron/managed-runtime.ts  下载校验、资源准备和私有 AVD
+electron/android.ts          模拟器、内部通信与显示进程
+resources/                   固定资源目录、许可证和构建时归档
+src/                         React 桌面、软件库与运行环境界面
+tests/                       自动化回归
 ```
 
 ## 许可证
 
-[MIT](LICENSE)。Android SDK、系统镜像、scrcpy 和所导入 APK 分别遵循各自的许可。
+[MIT](LICENSE)。Android 组件、系统镜像、scrcpy 和导入的 APK 分别遵循各自许可。首次准备会展示适用条款；许可文本变更后需要重新确认。

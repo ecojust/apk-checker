@@ -48,8 +48,15 @@ jobs:
         run: npm test
       - name: Typecheck and build
         run: npm run build
+      - name: Bundle verified portable emulator tools
+        run: npm run runtime:prepare
       - name: Package installer with ad-hoc macOS bundle signing
         run: npx electron-builder ${{ matrix.package }} --publish never
+      - name: Extract and execute packaged portable tools natively
+        run: npx tsx scripts/verify-portable-tools.ts
+      - name: Verify bundled Windows runtime archives
+        if: runner.os == 'Windows'
+        run: node scripts/verify-runtime-resources.mjs
       - name: Verify mounted macOS installer and launch the packaged application
         if: runner.os == 'macOS'
         env:
@@ -66,6 +73,7 @@ jobs:
             release/*.exe
             release/SHA256SUMS.txt
             release/mac-verification.*
+            release/portable-tools-verification.json
           if-no-files-found: error
           retention-days: 14
       - name: Upload macOS verification diagnostics on failure

@@ -23,7 +23,7 @@ SHA-256：
 86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b
 ```
 
-## 已验证结果
+## 0.1.x 外部环境测试结果
 
 本地使用真实 aapt 和 AppLibrary 验证了导入、同文件去重、软件库持久化；实际 Electron 窗口正确显示应用名称、版本、大小和待安装状态。没有设备时安装正确返回错误，未写入已安装记录。
 
@@ -40,6 +40,16 @@ SHA-256：
 
 电视失败是这款 APK 与所测镜像的 ABI 不匹配，不表示所有 Android TV 镜像都无法使用，也不能通过更换 Electron / Tauri 解决。
 
+## 新版电视补测记录
+
+API 36 / android-tv / x86_64 与 scrcpy 5.0.1 的结果分阶段保留：
+
+- [42040304820](https://github.com/ecojust/apk-checker/actions/runs/42040304820)：原版 APK 安装成功，scrcpy 因 CI 没有声卡而失败，未完成视频窗口验收。
+- [42041208224](https://github.com/ecojust/apk-checker/actions/runs/42041208224)：加入 CI 专用 SDL dummy 音频输出后，第一次尝试在安装的 180 秒时限处超时；后续尝试在工具准备阶段停滞并取消。
+- [42043737275](https://github.com/ecojust/apk-checker/actions/runs/42043737275)：复用 hosted 工具后仍在 `adb install -r` 超时，未证明启动成功。
+
+0.2.0 的[自动环境测试记录](managed-runtime.md)独立记录内置 APK 解析、私有工具／AVD 自动准备和新版实测结果。上述旧环境通过结论不能替代新流程验证。
+
 ## 测试边界
 
 - 无人值守测试在安装后授予 APK 已声明的读写存储权限；没有授予麦克风权限。
@@ -48,7 +58,7 @@ SHA-256：
 - 运行截图、logcat、aapt 元数据和 JSON 结果保存在各 CI run 的 artifacts 中，保留 14 天；APK 本体不上传。
 - 测试脚本要求使用没有安装 `com.local.ktv` 的干净 AVD，避免覆盖或删除已有用户数据。
 
-## 重现
+## 重现旧版外部环境测试
 
 本地需要已经启动的测试 AVD、Android SDK、aapt、scrcpy，以及下载好的原版 APK。设置 `APK_PATH`、`EXPECTED_APK_SHA256`、`ANDROID_HOME`、`APK_TEST_MODE`（phone / tv）、`APK_TEST_AVD`、`SCRCPY_PATH` 后运行：
 
@@ -57,3 +67,5 @@ npm run test:apk
 ```
 
 脚本会实际安装并在测试结束时卸载该 APK。CI 的 [APK 测试工作流](../../.github/workflows/apk-smoke.yml) 也支持手动选择标准手机/电视组合或较新的 64 位电视镜像。
+
+新版完整流程使用 `scripts/managed-apk-smoke.ts` 和 `.github/workflows/managed-apk-smoke.yml`，由程序自行下载环境、生成私有 AVD，无需手动安装 SDK 或准备 AVD。

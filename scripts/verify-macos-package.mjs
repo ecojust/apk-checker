@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { verifyRuntimeResources } from "./verify-runtime-resources.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
@@ -212,6 +213,9 @@ try {
     installedApp,
   ]);
   report.copiedBundleSignatureVerified = true;
+  report.runtimeResources = await verifyRuntimeResources(
+    path.join(installedApp, "Contents", "Resources"), "darwin", expectedArch,
+  );
   const executable = path.join(
     installedApp,
     "Contents",
@@ -273,6 +277,14 @@ try {
   assert.equal(report.renderer.nodeRequire, "undefined");
   assert.equal(report.renderer.nodeProcess, "undefined");
   assert.deepEqual(report.renderer.state.apps, []);
+  assert.equal(report.renderer.state.managed.supported, true);
+  assert.equal(report.renderer.state.managed.licenseAccepted, false);
+  assert.equal(report.renderer.state.managed.phoneReady, false);
+  assert.equal(report.renderer.state.managed.tvReady, false);
+  assert.equal(await evaluate("typeof window.apkChecker.choosePath"), "undefined");
+  const license = await evaluate("window.apkChecker.getRuntimeLicense()");
+  assert(license.includes("Android Software Development Kit"));
+  report.managedFirstRunVerified = true;
   const screen = await cdp("Page.captureScreenshot", { format: "png" });
   await writeFile(
     path.join(output, "mac-verification.png"),

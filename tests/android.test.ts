@@ -175,7 +175,15 @@ describe("AndroidRuntime", () => {
     expect(
       status.devices.find((device) => device.serial === "emulator-5556")?.avd,
     ).toBe("TV_API_35");
-    expect(status.devices[0].avd).toBe("");
+    expect(status.devices.map((device) => device.serial)).toEqual([
+      "emulator-5554",
+      "emulator-5556",
+    ]);
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("physical-device"),
+      ),
+    ).toBe(false);
   });
 
   it("reports an explicitly missing SDK rather than silently choosing another SDK", async () => {
@@ -569,5 +577,222 @@ describe("AndroidRuntime", () => {
     expect(reportError).toHaveBeenCalledWith(
       expect.stringContaining("Device disconnected"),
     );
+  });
+  it("does not query or expose physical and wireless adb devices", async () => {
+    const normal = output;
+    output = (args) =>
+      args[0] === "devices"
+        ? "List of devices attached\nUSB123\tdevice\n192.168.1.20:5555\tdevice\nadb-device._adb-tls-connect._tcp\tdevice\nemulator-5554\tdevice\nemulator-5556\toffline\n"
+        : normal(args);
+    const status = await runtime.getStatus(settings);
+    expect(status.devices).toEqual([
+      { serial: "emulator-5554", state: "device", avd: "Phone_API_35" },
+      { serial: "emulator-5556", state: "offline", avd: "" },
+    ]);
+    const addressedSerials = processMocks.execFile.mock.calls
+      .filter((call) => call[1][0] === "-s")
+      .map((call) => call[1][1]);
+    expect(addressedSerials).toEqual(["emulator-5554"]);
+  });
+
+  it("discovers the private SDK from overrides instead of inherited Android paths", async () => {
+    vi.stubEnv("ANDROID_SDK_ROOT", join(directory, "external-sdk"));
+    vi.stubEnv("ANDROID_HOME", join(directory, "another-external-sdk"));
+    const overrides = {
+      ANDROID_SDK_ROOT: settings.sdkPath,
+      ANDROID_HOME: settings.sdkPath,
+      ANDROID_AVD_HOME: join(directory, "private-avds"),
+      ADB_SERVER_SOCKET: "tcp:127.0.0.1:24567",
+      ANDROID_ADB_SERVER_PORT: "24567",
+    };
+    runtime = new AndroidRuntime(undefined, overrides);
+    const status = await runtime.getStatus({ ...settings, sdkPath: "" });
+    expect(status.sdkFound).toBe(true);
+    expect(status.adbFound).toBe(true);
+    for (const call of processMocks.execFile.mock.calls) {
+      expect(call[2].env).toEqual(expect.objectContaining(overrides));
+      expect(call[0]).not.toContain("external-sdk");
+    }
+    expect(process.env.ANDROID_SDK_ROOT).toBe(join(directory, "external-sdk"));
+  });
+
+  it("hides unrelated emulators from managed runtime status", async () => {
+    const normal = output;
+    output = (args) => {
+      if (args[0] === "devices")
+        return `${normal(args)}emulator-5560\tdevice\n`;
+      if (args[1] === "emulator-5560")
+        return "External_AndroidStudio_Device\nOK\n";
+      return normal(args);
+    };
+    runtime = new AndroidRuntime(undefined, {
+      ANDROID_AVD_HOME: join(directory, "private-avds"),
+    });
+    const status = await runtime.getStatus(settings);
+    expect(status.devices.map((device) => device.avd)).toEqual([
+      "Phone_API_35",
+      "TV_API_35",
+    ]);
+  });
+
+  it("uses private AVD metadata even when inherited Android home has a conflicting image", async () => {
+    const inheritedAvd = join(directory, "avds", "TV_API_35.avd");
+    const privateAvd = join(directory, "private-avds", "TV_API_35.avd");
+    await mkdir(inheritedAvd, { recursive: true });
+    await mkdir(privateAvd, { recursive: true });
+    await writeFile(
+      join(inheritedAvd, "config.ini"),
+      "tag.id=google_apis\nhw.device.name=pixel_8\n",
+    );
+    await writeFile(
+      join(privateAvd, "config.ini"),
+      "tag.id=android-tv\nhw.device.name=tv_1080p\n",
+    );
+    runtime = new AndroidRuntime(undefined, {
+      ANDROID_AVD_HOME: join(directory, "private-avds"),
+    });
+    await expect(
+      runtime.install(app, apkPath, "tv", settings, vi.fn()),
+    ).resolves.toEqual({ avd: "TV_API_35" });
+  });
+
+  it("passes the same isolated environment to emulator boot and owned shutdown commands", async () => {
+    const overrides = {
+      ANDROID_AVD_HOME: join(directory, "private-avds"),
+      ANDROID_USER_HOME: join(directory, "private-user"),
+      ANDROID_EMULATOR_HOME: join(directory, "private-emulator"),
+      ADB_SERVER_SOCKET: "tcp:127.0.0.1:24567",
+      ANDROID_ADB_SERVER_PORT: "24567",
+    };
+    runtime = new AndroidRuntime(undefined, overrides);
+    const normal = output;
+    output = (args) =>
+      args[0] === "devices"
+        ? ""
+        : args.includes("emu")
+          ? "Phone_API_35\nOK\n"
+          : normal(args);
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+    expect(processMocks.spawn).toHaveBeenCalledWith(
+      join(settings.sdkPath, "emulator", exe("emulator")),
+      expect.arrayContaining(["-avd", "Phone_API_35"]),
+      expect.objectContaining({ env: expect.objectContaining(overrides) }),
+    );
+    await runtime.dispose();
+    expect(
+      processMocks.execFile.mock.calls.some((call) => call[1].includes("kill")),
+    ).toBe(true);
+    for (const call of processMocks.execFile.mock.calls)
+      expect(call[2].env).toEqual(expect.objectContaining(overrides));
+    const emulatorStop = processMocks.execFile.mock.calls.findIndex((call) =>
+      call[1].includes("kill"),
+    );
+    const serverStop = processMocks.execFile.mock.calls.findIndex((call) =>
+      call[1].includes("kill-server"),
+    );
+    expect(serverStop).toBeGreaterThan(emulatorStop);
+    expect(processMocks.execFile.mock.calls[serverStop][2].timeout).toBe(3000);
+  });
+
+  it("passes private SDK, adb socket and display server paths to scrcpy", async () => {
+    const overrides = {
+      ANDROID_HOME: settings.sdkPath,
+      ANDROID_AVD_HOME: join(directory, "private-avds"),
+      ADB_SERVER_SOCKET: "tcp:127.0.0.1:24567",
+      ANDROID_ADB_SERVER_PORT: "24567",
+      SCRCPY_SERVER_PATH: join(directory, "private-runtime", "scrcpy-server"),
+    };
+    runtime = new AndroidRuntime(undefined, overrides);
+    await runtime.launch(app, "phone", settings, vi.fn());
+    expect(processMocks.spawn).toHaveBeenCalledWith(
+      settings.scrcpyPath,
+      expect.arrayContaining(["--serial", "emulator-5554"]),
+      expect.objectContaining({
+        env: expect.objectContaining({
+          ...overrides,
+          ADB: join(settings.sdkPath, "platform-tools", exe("adb")),
+        }),
+      }),
+    );
+  });
+
+  it("does not make APK import depend on external aapt tools", async () => {
+    await rm(join(settings.sdkPath, "build-tools"), { recursive: true });
+    const status = await runtime.getStatus(settings);
+    expect(status.aaptFound).toBe(false);
+    expect(status.issues).toEqual([]);
+  });
+
+  it.each(["tcp:127.0.0.1:24567", "tcp:localhost:24567"])(
+    "shuts down only the private adb socket used by this instance: %s",
+    async (socket) => {
+      const overrides = {
+        ADB_SERVER_SOCKET: socket,
+        ANDROID_ADB_SERVER_PORT: "24567",
+      };
+      runtime = new AndroidRuntime(undefined, overrides);
+      await runtime.getStatus(settings);
+      await runtime.dispose();
+      await runtime.dispose();
+      const shutdowns = processMocks.execFile.mock.calls.filter(
+        (call) => call[1][0] === "kill-server",
+      );
+      expect(shutdowns).toHaveLength(1);
+      expect(shutdowns[0]).toEqual([
+        join(settings.sdkPath, "platform-tools", exe("adb")),
+        ["kill-server"],
+        expect.objectContaining({
+          timeout: 3000,
+          env: expect.objectContaining(overrides),
+        }),
+        expect.any(Function),
+      ]);
+    },
+  );
+
+  it("does not stop a private socket when no adb command was invoked", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      ADB_SERVER_SOCKET: "tcp:127.0.0.1:24567",
+    });
+    await runtime.getAaptPath(settings);
+    await runtime.dispose();
+    expect(processMocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it("does not claim ownership of an inherited adb server socket", async () => {
+    vi.stubEnv("ADB_SERVER_SOCKET", "tcp:127.0.0.1:24567");
+    runtime = new AndroidRuntime();
+    await runtime.getStatus(settings);
+    await runtime.dispose();
+    expect(
+      processMocks.execFile.mock.calls.some(
+        (call) => call[1][0] === "kill-server",
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "tcp:127.0.0.1:5037",
+    "tcp:localhost:5037",
+    "tcp:remotehost:24567",
+    "tcp:127.0.0.1:0",
+  ])("never shuts down default or nonprivate adb socket %s", async (socket) => {
+    runtime = new AndroidRuntime(undefined, { ADB_SERVER_SOCKET: socket });
+    await runtime.getStatus(settings);
+    await runtime.dispose();
+    expect(
+      processMocks.execFile.mock.calls.some(
+        (call) => call[1][0] === "kill-server",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not restart an adb daemon after disposal", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      ADB_SERVER_SOCKET: "tcp:127.0.0.1:24567",
+    });
+    await runtime.dispose();
+    await runtime.getStatus(settings);
+    expect(processMocks.execFile).not.toHaveBeenCalled();
   });
 });

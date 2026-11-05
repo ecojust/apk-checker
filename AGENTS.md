@@ -13,8 +13,9 @@
 ## 项目结构与改动范围
 
 - `electron/main.ts`、`electron/preload.ts`：桌面窗口、受限 IPC、原生文件选择和操作调度。
-- `electron/library.ts`：APK 元数据解析、私有缓存、持久化设置和安装记录。
-- `electron/android.ts`：SDK 检测、AVD 启动、adb 操作、scrcpy 窗口与进程清理。
+- `electron/apk-metadata.ts`、`electron/library.ts`：内置 APK 解析、私有缓存、原子持久化和安装记录；正常导入不调用 aapt 或外部 SDK。
+- `electron/managed-runtime.ts`、`resources/`：固定资源目录、许可证、下载校验、自动准备及私有 AVD。
+- `electron/android.ts`：指定模拟器的内部通信、scrcpy 窗口与自有进程清理。
 - `src/`：React 桌面、软件库和运行环境界面；`src/shared/types.ts` 是前后端共享契约。
 - `tests/`：自动化回归；`scripts/`：实际 APK 检查及构建辅助工具；`.github/workflows/`：CI 和安装包构建。
 - `docs/`：使用说明和可复查测试报告；`history/`：用户请求、行动记录与交接索引。
@@ -23,9 +24,13 @@
 
 ## APK、设备和数据
 
+- 0.2.0 产品只管理自己的模拟器，不增加真实设备连接、部署或调试界面。用户不需要安装 Android Studio、Java、aapt 或配置 SDK／scrcpy 路径；不要重新引入这些前置要求。
+- 内部 adb 仍是模拟器实现的一部分，使用应用私有的 SDK／AVD 目录和回环端口。只向经过验证的模拟器 serial 与目标 AVD 发出操作，不接管默认 5037 服务或用户外部设备；不能把私有端口误称为 adb 守护进程绝不枚举 USB。
 - 始终明确目标模式、AVD 和设备 serial。手机与电视状态绑定各自 AVD，不能因切换界面就宣称切换了真实 Android 系统类型。
 - 保持「导入 → 软件库 → 实际安装成功 → 桌面 → 实际启动窗口」的状态边界。命令发出、浏览器预览或 mock 成功都不能作为设备操作成功的证据。
-- IPC 只暴露必要接口，校验参数和请求来源。调用 adb、aapt、Emulator、scrcpy 时使用参数数组，不把 APK 元数据拼入宿主 shell 命令。
+- IPC 只暴露必要接口，校验参数和请求来源。调用内部 adb、Emulator、scrcpy 时使用参数数组，不把 APK 元数据拼入宿主 shell 命令。旧诊断脚本中的 aapt 不得变成生产导入依赖。
+- APK 是不可信输入：保持 ZIP 路径、解压大小、校验、二进制偏移、字符串展开及解析工作量上限；不执行 APK 内容。
+- 运行组件使用目录中固定的 HTTPS 来源、大小和摘要，镜像必须验证相同原始摘要；下载、取消或解包失败不得标记为就绪。许可须展示实际条款并由用户勾选，文本变更后重新确认。重复准备不得清空已有 AVD 用户数据。
 - APK 缓存不得修改源文件；持久化写入应保留原子提交和失败回滚。索引损坏不得静默清空；卸载和删除需要准确说明影响范围。
 - 只清理由本程序启动并确认归属的模拟器和显示进程，不关闭用户通过其他程序启动的设备。
 - 真实 APK 测试固定来源、版本和 SHA-256，使用干净测试 AVD；不得覆盖或卸载已有用户应用。测试材料和第三方 APK 不提交进仓库或安装包。
@@ -41,7 +46,8 @@ npm test
 npm run build
 ```
 
-- `npm run test:apk` 会实际安装和卸载应用，必须先按 `scripts/apk-smoke.ts` 及对应测试报告准备独立 AVD、SDK、scrcpy、APK 和校验值。
+- 实际 APK smoke 会安装和卸载应用，必须使用独立数据目录／干净 AVD 和固定 APK 哈希。`npm run test:apk` 对应的旧外部 SDK 脚本仍可作诊断，但其结果不能代替新 `ManagedRuntime` 的首次下载、准备和启动验收。
+- ZIP／tar fixture、下载替身和界面 fixture 测试只能证明对应逻辑；真实归档校验、完整环境准备、AVD 启动、APK 运行和目标系统验收分别记录。
 - 界面修改验证真实交互、等待状态、错误反馈和手机／电视状态隔离。截图应来自实际执行，并区分 Electron、浏览器 fixture、Android 模拟器和实体设备。
 - 保留失败记录和原始报告，补充结论另存；记录所测提交、APK 哈希、镜像/API/ABI、工具版本和实际执行脚本。新代码不能直接继承旧版本的截图或测试通过结论。
 - 方向键成功注入不等于已验证焦点导航；启动成功不等于已验证视频播放、录音或音频延迟。
@@ -52,10 +58,12 @@ npm run build
 ## 构建、签名与交付
 
 - 目标平台为 macOS Apple Silicon、macOS Intel 和 Windows x64。构建命令和当前依赖以 `package.json`、`.github/workflows/` 和 `README.md` 为准。
+- `npm run dist` 自动准备目标平台资源；单独调用 electron-builder 前须执行 `npm run runtime:prepare`。跨架构构建必须匹配资源目录中的目标架构，不能将宿主资源混入另一架构的安装包。
 - 编译通过、安装包生成、签名验证、系统公证、目标机器启动和实际 APK 运行是不同状态，必须分别记录。尤其不能把 macOS ad-hoc 签名称为 Developer ID 签名或 Apple 公证。
 - 处理 macOS「已损坏」等报告时先核查对应产物、架构、代码签名和打包后完整性，保留可复查结果；不要用全局关闭 Gatekeeper 作为修复方案。
 - 不临时伪造发布证书、不替换用户签名身份、不记录签名秘密。没有正式签名或公证凭据时完成可独立验证的修复，并明确剩余分发限制。
-- 不把 APK、Android SDK、系统镜像或 scrcpy 已下载误报为已随桌面安装包分发。安装包、Git 提交、PR 和 GitHub Release 的发布状态分别说明。
+- 明确分发边界：APK 解析模块内置；Platform-Tools 和 scrcpy 按构建配置随包；Emulator 和系统镜像首次使用自动下载，后续可离线复用。宿主硬件虚拟化不能内置。归档已下载、安装包已生成和用户已运行分别记录，不宣称首次完全离线可用。
+- 安装包、Git 提交、PR 和 GitHub Release 的发布状态分别说明；0.1.1 的签名和启动证据不能直接视作 0.2.0 的原生验收通过。
 
 ## 提交与持续记录
 

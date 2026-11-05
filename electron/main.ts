@@ -1,7 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net } from "electron";
 import path from "node:path";
 import { AppLibrary } from "./library";
 import { AndroidRuntime } from "./android";
+import { ManagedRuntime } from "./managed-runtime";
 import type {
   ActionResult,
   DeviceMode,
@@ -13,10 +14,10 @@ import type {
 
 let mainWindow: BrowserWindow | null = null;
 let library: AppLibrary;
-const runtime = new AndroidRuntime((message) =>
-  progress(message, undefined, undefined, "error"),
-);
+let managed: ManagedRuntime;
+let runtime: AndroidRuntime;
 let busy = false;
+let preparationCancellation = 0;
 let cachedRuntime: { at: number; value: RuntimeStatus } | undefined;
 
 function errorMessage(error: unknown): string {
@@ -28,6 +29,8 @@ function progress(
   appId?: string,
   mode?: DeviceMode,
   kind: "info" | "error" = "info",
+  completedBytes?: number,
+  totalBytes?: number,
 ) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send("apk:progress", {
@@ -35,6 +38,8 @@ function progress(
       appId,
       mode,
       kind,
+      completedBytes,
+      totalBytes,
     } satisfies OperationProgress);
   }
 }
@@ -61,6 +66,7 @@ async function action(operation: () => Promise<void>): Promise<ActionResult> {
     changed();
     return { ok: true };
   } catch (error) {
+    changed();
     return { ok: false, error: errorMessage(error) };
   }
 }
@@ -79,21 +85,18 @@ function validId(value: unknown): string {
 function validSettings(value: unknown): Settings {
   if (!value || typeof value !== "object") throw new Error("设置格式无效。");
   const input = value as Record<string, unknown>;
-  const result: Record<string, string> = {};
-  for (const key of ["sdkPath", "scrcpyPath", "phoneAvd", "tvAvd"] as const) {
-    if (
-      typeof input[key] !== "string" ||
-      input[key].length > 4096 ||
-      input[key].includes("\0")
-    ) {
-      throw new Error("设置内容无效。");
-    }
-    result[key] = input[key].trim();
-  }
-  if (result.phoneAvd && result.phoneAvd === result.tvAvd) {
-    throw new Error("手机模式和电视模式需要选择不同的虚拟设备。");
-  }
-  return { ...result, defaultMode: validMode(input.defaultMode) } as Settings;
+  // Tool locations and device names are owned by the application, not renderer inputs.
+  return managed.getSettings(validMode(input.defaultMode));
+}
+
+async function prepareDevice(mode: DeviceMode, appId?: string): Promise<Settings> {
+  await managed.prepare(mode, (message, completed, total) =>
+    progress(message, appId, mode, "info", completed, total),
+  );
+  const settings = managed.getSettings(library.getSettings().defaultMode);
+  await library.saveSettings(settings);
+  cachedRuntime = undefined;
+  return settings;
 }
 
 async function runtimeStatus(force = false): Promise<RuntimeStatus> {
@@ -122,6 +125,7 @@ function registerIpc() {
     apps: library.getApps(),
     settings: library.getSettings(),
     runtime: await runtimeStatus(),
+    managed: await managed.getStatus(),
   }));
 
   handle("apk:import", async (): Promise<ImportResult> => {
@@ -135,14 +139,13 @@ function registerIpc() {
         });
         if (selection.canceled || !selection.filePaths.length)
           return { ok: true, imported: 0, errors: [] };
-        const aaptPath = await runtime.getAaptPath(library.getSettings());
         let imported = 0;
         const errors: string[] = [];
         const warnings: string[] = [];
         for (const filePath of selection.filePaths) {
           progress(`正在导入 ${path.basename(filePath)}…`);
           try {
-            const result = await library.importApk(filePath, aaptPath);
+            const result = await library.importApk(filePath);
             if (!result.duplicate) imported += 1;
             if (result.replaced)
               warnings.push(
@@ -170,11 +173,12 @@ function registerIpc() {
       const appId = validId(id);
       const deviceMode = validMode(mode);
       const item = library.getApp(appId);
+      const settings = await prepareDevice(deviceMode, appId);
       const result = await runtime.install(
         item,
         library.getApkPath(appId),
         deviceMode,
-        library.getSettings(),
+        settings,
         (message) => progress(message, appId, deviceMode),
       );
       await library.markInstalled(appId, deviceMode, result.avd);
@@ -185,10 +189,11 @@ function registerIpc() {
     action(async () => {
       const appId = validId(id);
       const deviceMode = validMode(mode);
+      const settings = await prepareDevice(deviceMode, appId);
       await runtime.launch(
         library.getApp(appId),
         deviceMode,
-        library.getSettings(),
+        settings,
         (message) => progress(message, appId, deviceMode),
       );
     }),
@@ -198,10 +203,11 @@ function registerIpc() {
     action(async () => {
       const appId = validId(id);
       const deviceMode = validMode(mode);
+      const settings = await prepareDevice(deviceMode, appId);
       await runtime.uninstall(
         library.getApp(appId),
         deviceMode,
-        library.getSettings(),
+        settings,
         (message) => progress(message, appId, deviceMode),
       );
       await library.markUninstalled(appId, deviceMode);
@@ -226,16 +232,20 @@ function registerIpc() {
     }),
   );
 
-  handle("apk:choose-path", async (kind: unknown) => {
-    if (kind !== "sdk" && kind !== "scrcpy")
-      throw new Error("无效的路径类型。");
-    const selection = await dialog.showOpenDialog(mainWindow!, {
-      title:
-        kind === "sdk" ? "选择 Android SDK 目录" : "选择 scrcpy 可执行文件",
-      properties: kind === "sdk" ? ["openDirectory"] : ["openFile"],
-    });
-    return selection.canceled ? null : (selection.filePaths[0] ?? null);
+  handle("apk:prepare", (mode: unknown, acceptLicense: unknown) => action(async () => {
+    const cancellation = preparationCancellation;
+    const deviceMode = validMode(mode);
+    if (acceptLicense !== undefined && typeof acceptLicense !== "boolean") throw new Error("准备参数无效。");
+    if (acceptLicense === true) await managed.acceptLicense();
+    if (cancellation !== preparationCancellation) throw new Error("已取消模拟器准备。");
+    await prepareDevice(deviceMode);
+  }));
+  handle("apk:cancel-prepare", (): ActionResult => {
+    preparationCancellation += 1;
+    managed.cancel();
+    return { ok: true };
   });
+  handle("apk:license", () => managed.getLicense());
   handle("apk:runtime", () => runtimeStatus(true));
 }
 
@@ -281,6 +291,17 @@ if (!app.requestSingleInstanceLock()) {
     .then(async () => {
       library = new AppLibrary(app.getPath("userData"));
       await library.init();
+      managed = new ManagedRuntime(
+        app.getPath("userData"),
+        app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), "resources"),
+        { fetch: net.fetch as typeof globalThis.fetch },
+      );
+      await managed.init();
+      runtime = new AndroidRuntime(
+        message => progress(message, undefined, undefined, "error"),
+        managed.getEnvironment(),
+      );
+      await library.adoptManagedSettings(managed.getSettings(library.getSettings().defaultMode));
       registerIpc();
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
@@ -320,7 +341,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (shuttingDown) return;
     shuttingDown = true;
-    void runtime.dispose().finally(() => {
+    void Promise.allSettled([managed?.dispose(), runtime?.dispose()]).finally(() => {
       canQuit = true;
       app.quit();
     });

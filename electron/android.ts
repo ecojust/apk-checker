@@ -48,6 +48,7 @@ function run(
   file: string,
   args: string[],
   timeout = COMMAND_TIMEOUT,
+  env?: NodeJS.ProcessEnv,
 ): Promise<string> {
   return new Promise((resolveOutput, reject) => {
     execFile(
@@ -58,6 +59,7 @@ function run(
         maxBuffer: 4 * 1024 * 1024,
         windowsHide: true,
         encoding: "utf8",
+        env,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -100,11 +102,17 @@ export function validatePackageName(packageName: string): void {
     throw new Error("APK 包名无效，无法执行 Android 命令。");
 }
 
-function configuredAvd(settings: Settings, mode: DeviceMode): string {
+function configuredAvd(
+  settings: Settings,
+  mode: DeviceMode,
+  managed = false,
+): string {
   const avd = mode === "phone" ? settings.phoneAvd : settings.tvAvd;
   if (!avd)
     throw new Error(
-      `请先在运行环境中选择${mode === "phone" ? "手机" : "电视"}虚拟设备（AVD）。`,
+      managed
+        ? `请先在运行环境中准备${mode === "phone" ? "手机" : "电视"}模拟器。`
+        : `请先在运行环境中选择${mode === "phone" ? "手机" : "电视"}虚拟设备（AVD）。`,
     );
   if (!AVD_PATTERN.test(avd))
     throw new Error("虚拟设备名称无效，请重新选择 AVD。");
@@ -120,7 +128,42 @@ export class AndroidRuntime {
   private disposed = false;
   private disposal?: Promise<void>;
 
-  constructor(private readonly onRuntimeError?: (message: string) => void) {}
+  private readonly environment: NodeJS.ProcessEnv;
+  private readonly privateAvdHome: boolean;
+  private readonly privateAdbSocket?: string;
+  private readonly adbExecutables = new Set<string>();
+  private usedPrivateAdb?: string;
+
+  constructor(
+    private readonly onRuntimeError?: (message: string) => void,
+    envOverrides: NodeJS.ProcessEnv = {},
+  ) {
+    this.environment = { ...process.env, ...envOverrides };
+    this.privateAvdHome = Boolean(envOverrides.ANDROID_AVD_HOME);
+    // Only a manager-supplied nondefault loopback socket is ours to shut down.
+    // An inherited ADB_SERVER_SOCKET (or the normal 5037 server) is never owned.
+    const socket = envOverrides.ADB_SERVER_SOCKET;
+    const socketMatch = socket?.match(/^tcp:(?:127\.0\.0\.1|localhost):(\d+)$/);
+    const port = Number(socketMatch?.[1]);
+    if (socketMatch && port > 1023 && port <= 65535 && port !== 5037) {
+      this.privateAdbSocket = socket;
+    }
+  }
+
+  private run(
+    file: string,
+    args: string[],
+    timeout = COMMAND_TIMEOUT,
+    duringDisposal = false,
+  ): Promise<string> {
+    if (this.disposed && !duringDisposal) {
+      return Promise.reject(new Error("应用正在退出，操作已取消。"));
+    }
+    if (this.privateAdbSocket && this.adbExecutables.has(file)) {
+      this.usedPrivateAdb = file;
+    }
+    return run(file, args, timeout, this.environment);
+  }
 
   private assertActive(): void {
     if (this.disposed) throw new Error("应用正在退出，操作已取消。");
@@ -130,14 +173,14 @@ export class AndroidRuntime {
     if (settings.sdkPath.trim()) return resolve(settings.sdkPath.trim());
     const home = homedir();
     const candidates = [
-      process.env.ANDROID_SDK_ROOT,
-      process.env.ANDROID_HOME,
+      this.environment.ANDROID_SDK_ROOT,
+      this.environment.ANDROID_HOME,
       process.platform === "darwin"
         ? join(home, "Library", "Android", "sdk")
         : undefined,
       process.platform === "win32"
         ? join(
-            process.env.LOCALAPPDATA || join(home, "AppData", "Local"),
+            this.environment.LOCALAPPDATA || join(home, "AppData", "Local"),
             "Android",
             "Sdk",
           )
@@ -166,14 +209,19 @@ export class AndroidRuntime {
   ): Promise<string> {
     const root = await this.sdkRoot(settings);
     const path = root ? join(root, folder, this.exe(name)) : "";
-    return path && (await exists(path, true)) ? path : "";
+    if (!path || !(await exists(path, true))) return "";
+    if (folder === "platform-tools" && name === "adb")
+      this.adbExecutables.add(path);
+    return path;
   }
 
   private async requireAdb(settings: Settings): Promise<string> {
     const adb = await this.sdkTool(settings, "platform-tools", "adb");
     if (!adb)
       throw new Error(
-        "未找到 adb，请安装 Android SDK Platform-Tools，并在运行环境中设置 SDK 路径。",
+        this.privateAvdHome
+          ? "内置连接组件缺失，请在运行环境中重新准备模拟器。"
+          : "未找到 adb，请安装 Android SDK Platform-Tools，并在运行环境中设置 SDK 路径。",
       );
     return adb;
   }
@@ -184,7 +232,7 @@ export class AndroidRuntime {
       return (await exists(path, true)) ? path : "";
     }
     const candidates = [
-      ...(process.env.PATH || "")
+      ...(this.environment.PATH || "")
         .split(delimiter)
         .filter(Boolean)
         .map((folder) => join(folder, this.exe("scrcpy"))),
@@ -218,7 +266,7 @@ export class AndroidRuntime {
   private async avds(settings: Settings): Promise<string[]> {
     const emulator = await this.sdkTool(settings, "emulator", "emulator");
     if (!emulator) return [];
-    const output = await run(emulator, ["-list-avds"]);
+    const output = await this.run(emulator, ["-list-avds"]);
     return output
       .split(/\r?\n/)
       .map((value) => value.trim())
@@ -226,11 +274,15 @@ export class AndroidRuntime {
   }
 
   private async devices(adb: string): Promise<Device[]> {
-    const devices = parseDevices(await run(adb, ["devices"]));
+    // ADB may enumerate USB/network devices internally. Product operations and
+    // status never expose or target them, even if a server reports them.
+    const devices = parseDevices(await this.run(adb, ["devices"])).filter(
+      (device) => /^emulator-\d+$/.test(device.serial),
+    );
     return Promise.all(
       devices.map(async (device) => {
         if (/^emulator-\d+$/.test(device.serial) && device.state === "device") {
-          const name = await run(
+          const name = await this.run(
             adb,
             ["-s", device.serial, "emu", "avd", "name"],
             5000,
@@ -257,9 +309,9 @@ export class AndroidRuntime {
     const status: RuntimeStatus = {
       sdkFound: Boolean(
         sdk &&
-        (await stat(sdk)
-          .then((info) => info.isDirectory())
-          .catch(() => false)),
+          (await stat(sdk)
+            .then((info) => info.isDirectory())
+            .catch(() => false)),
       ),
       adbFound: Boolean(adb),
       emulatorFound: Boolean(emulator),
@@ -270,14 +322,29 @@ export class AndroidRuntime {
       issues: [],
     };
     if (!status.sdkFound)
-      status.issues.push("请安装 Android SDK，并设置 SDK 路径。");
-    if (!adb) status.issues.push("缺少 Platform-Tools（adb）。");
-    if (!emulator) status.issues.push("缺少 Android Emulator。");
-    if (!aapt)
       status.issues.push(
-        "缺少 Build-Tools（aapt / aapt2），暂时无法导入 APK。",
+        this.privateAvdHome
+          ? "内置运行环境尚未准备完成。"
+          : "请安装 Android SDK，并设置 SDK 路径。",
       );
-    if (!scrcpy) status.issues.push("缺少 scrcpy，暂时无法打开应用显示窗口。");
+    if (!adb)
+      status.issues.push(
+        this.privateAvdHome
+          ? "内置连接组件尚未准备完成。"
+          : "缺少 Platform-Tools（adb）。",
+      );
+    if (!emulator)
+      status.issues.push(
+        this.privateAvdHome
+          ? "内置模拟器尚未准备完成。"
+          : "缺少 Android Emulator。",
+      );
+    if (!scrcpy)
+      status.issues.push(
+        this.privateAvdHome
+          ? "内置显示组件尚未准备完成。"
+          : "缺少 scrcpy，暂时无法打开应用显示窗口。",
+      );
     await Promise.all([
       emulator
         ? this.avds(settings)
@@ -291,7 +358,13 @@ export class AndroidRuntime {
       adb
         ? this.devices(adb)
             .then((devices) => {
-              status.devices = devices;
+              status.devices = this.privateAvdHome
+                ? devices.filter(
+                    (device) =>
+                      device.avd === settings.phoneAvd ||
+                      device.avd === settings.tvAvd,
+                  )
+                : devices;
             })
             .catch((error) => {
               status.issues.push(`连接 adb 失败：${messageOf(error)}`);
@@ -300,20 +373,33 @@ export class AndroidRuntime {
     ]);
     if (emulator && !status.avds.length)
       status.issues.push(
-        "尚未发现虚拟设备，请在 Android Studio Device Manager 创建手机和 Android TV AVD。",
+        this.privateAvdHome
+          ? "尚未准备模拟器，请在运行环境中准备手机或电视模式。"
+          : "尚未发现虚拟设备，请在 Android Studio Device Manager 创建手机和 Android TV AVD。",
       );
     if (settings.phoneAvd && !status.avds.includes(settings.phoneAvd))
-      status.issues.push(`手机虚拟设备 ${settings.phoneAvd} 不存在。`);
+      status.issues.push(
+        this.privateAvdHome
+          ? "手机模拟器尚未准备完成。"
+          : `手机虚拟设备 ${settings.phoneAvd} 不存在。`,
+      );
     if (settings.tvAvd && !status.avds.includes(settings.tvAvd))
-      status.issues.push(`电视虚拟设备 ${settings.tvAvd} 不存在。`);
+      status.issues.push(
+        this.privateAvdHome
+          ? "电视模拟器尚未准备完成。"
+          : `电视虚拟设备 ${settings.tvAvd} 不存在。`,
+      );
     return status;
   }
 
   // Read AVD metadata when available so a phone image is not silently used as a TV.
   private async checkDeviceMode(avd: string, mode: DeviceMode): Promise<void> {
     const avdHome =
-      process.env.ANDROID_AVD_HOME ||
-      join(process.env.ANDROID_USER_HOME || join(homedir(), ".android"), "avd");
+      this.environment.ANDROID_AVD_HOME ||
+      join(
+        this.environment.ANDROID_USER_HOME || join(homedir(), ".android"),
+        "avd",
+      );
     let avdDirectory = join(avdHome, `${avd}.avd`);
     const ini = await readFile(join(avdHome, `${avd}.ini`), "utf8").catch(
       () => "",
@@ -335,11 +421,15 @@ export class AndroidRuntime {
       /(?:^|_)tv(?:_|$)/i.test(characteristics || "");
     if (mode === "tv" && tag && !isTv)
       throw new Error(
-        `AVD「${avd}」不是 Android TV 设备，请在运行环境中选择电视虚拟设备。`,
+        this.privateAvdHome
+          ? "内置电视镜像配置不匹配，请重新准备电视模式。"
+          : `AVD「${avd}」不是 Android TV 设备，请在运行环境中选择电视虚拟设备。`,
       );
     if (mode === "phone" && isTv)
       throw new Error(
-        `AVD「${avd}」是电视设备，请在运行环境中选择手机虚拟设备。`,
+        this.privateAvdHome
+          ? "内置手机镜像配置不匹配，请重新准备手机模式。"
+          : `AVD「${avd}」是电视设备，请在运行环境中选择手机虚拟设备。`,
       );
   }
 
@@ -374,10 +464,14 @@ export class AndroidRuntime {
     progress: Progress,
   ): Promise<{ adb: string; serial: string; avd: string }> {
     this.assertActive();
-    const avd = configuredAvd(settings, mode);
+    const avd = configuredAvd(settings, mode, this.privateAvdHome);
     const adb = await this.requireAdb(settings);
     if (!(await this.avds(settings)).includes(avd))
-      throw new Error(`找不到虚拟设备「${avd}」，请在运行环境中重新选择。`);
+      throw new Error(
+        this.privateAvdHome
+          ? "内置模拟器配置缺失，请重新准备对应模式的运行环境。"
+          : `找不到虚拟设备「${avd}」，请在运行环境中重新选择。`,
+      );
     await this.checkDeviceMode(avd, mode);
     const devices = await this.devices(adb);
     const existing = devices.find(
@@ -392,7 +486,11 @@ export class AndroidRuntime {
         throw new Error("该虚拟设备仍在启动，请稍后重试。");
       const emulator = await this.sdkTool(settings, "emulator", "emulator");
       if (!emulator)
-        throw new Error("未找到 Android Emulator，请在 SDK Manager 安装。");
+        throw new Error(
+          this.privateAvdHome
+            ? "内置模拟器缺失，请重新准备运行环境。"
+            : "未找到 Android Emulator，请在 SDK Manager 安装。",
+        );
       const port = await this.freePort(devices);
       serial = `emulator-${port}`;
       progress(
@@ -404,6 +502,7 @@ export class AndroidRuntime {
         {
           stdio: ["ignore", "ignore", "pipe"],
           windowsHide: true,
+          env: this.environment,
         },
       );
       this.ownedEmulators.set(avd, { child, adb, serial, avd });
@@ -427,7 +526,7 @@ export class AndroidRuntime {
         throw new Error(
           `虚拟设备启动失败：${processError || "模拟器进程已退出，请检查系统镜像和硬件虚拟化支持。"}`,
         );
-      const name = await run(
+      const name = await this.run(
         adb,
         ["-s", serial, "emu", "avd", "name"],
         3000,
@@ -438,7 +537,7 @@ export class AndroidRuntime {
           .map((line) => line.trim())
           .includes(avd)
       ) {
-        const booted = await run(
+        const booted = await this.run(
           adb,
           ["-s", serial, "shell", "getprop", "sys.boot_completed"],
           3000,
@@ -460,7 +559,9 @@ export class AndroidRuntime {
       }
     }
     throw new Error(
-      "虚拟设备启动超时（3 分钟）。请检查硬件虚拟化、系统镜像架构，或先在 Android Studio 中启动此 AVD。",
+      this.privateAvdHome
+        ? "模拟器启动超时（3 分钟）。请检查系统硬件虚拟化支持，重启应用后重试。"
+        : "虚拟设备启动超时（3 分钟）。请检查硬件虚拟化、系统镜像架构，或先在 Android Studio 中启动此 AVD。",
     );
   }
 
@@ -480,7 +581,7 @@ export class AndroidRuntime {
       onProgress,
     );
     onProgress(`正在安装 ${app.name}…`);
-    const output = await run(
+    const output = await this.run(
       adb,
       ["-s", serial, "install", "-r", apkPath],
       180_000,
@@ -499,7 +600,7 @@ export class AndroidRuntime {
     settings: Settings,
   ): void {
     validatePackageName(app.packageName);
-    const avd = configuredAvd(settings, mode);
+    const avd = configuredAvd(settings, mode, this.privateAvdHome);
     if (app.installed[mode]?.avd !== avd)
       throw new Error("此应用尚未安装到当前虚拟设备，请先安装。");
   }
@@ -514,7 +615,9 @@ export class AndroidRuntime {
     const scrcpy = await this.scrcpyPath(settings);
     if (!scrcpy)
       throw new Error(
-        "未找到 scrcpy。请先安装 scrcpy，并在运行环境中设置可执行文件路径。",
+        this.privateAvdHome
+          ? "内置显示组件缺失，请重新准备运行环境。"
+          : "未找到 scrcpy。请先安装 scrcpy，并在运行环境中设置可执行文件路径。",
       );
     const { adb, serial } = await this.ensureDevice(settings, mode, onProgress);
     const category =
@@ -523,7 +626,7 @@ export class AndroidRuntime {
         : "android.intent.category.LAUNCHER";
     const resolveActivity = async (launcherCategory: string) =>
       parseResolvedActivity(
-        await run(adb, [
+        await this.run(adb, [
           "-s",
           serial,
           "shell",
@@ -552,7 +655,7 @@ export class AndroidRuntime {
         "此 APK 没有可启动的应用入口，可能是插件、服务或不兼容当前设备。",
       );
     // adb shell joins arguments; quote the validated component to preserve Java inner-class '$'.
-    const output = await run(
+    const output = await this.run(
       adb,
       ["-s", serial, "shell", "am", "start", "-W", "-n", `'${activity}'`],
       45_000,
@@ -583,7 +686,7 @@ export class AndroidRuntime {
       {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
-        env: { ...process.env, ADB: adb },
+        env: { ...this.environment, ADB: adb },
       },
     );
     this.windows.set(serial, child);
@@ -651,7 +754,7 @@ export class AndroidRuntime {
     const { adb, serial } = await this.ensureDevice(settings, mode, onProgress);
     onProgress(`正在卸载 ${app.name}…`);
     // An externally reset AVD may no longer have the package. Clear the stale record safely.
-    const installed = await run(adb, [
+    const installed = await this.run(adb, [
       "-s",
       serial,
       "shell",
@@ -662,7 +765,7 @@ export class AndroidRuntime {
     ]);
     if (!installed.split(/\r?\n/).includes(`package:${app.packageName}`))
       return;
-    const output = await run(
+    const output = await this.run(
       adb,
       ["-s", serial, "uninstall", app.packageName],
       60_000,
@@ -675,10 +778,11 @@ export class AndroidRuntime {
   private async stopEmulator(owned: OwnedEmulator): Promise<void> {
     // Verify the AVD identity before issuing a shutdown: never stop an externally owned device.
     try {
-      const name = await run(
+      const name = await this.run(
         owned.adb,
         ["-s", owned.serial, "emu", "avd", "name"],
         2000,
+        true,
       );
       if (
         name
@@ -686,7 +790,12 @@ export class AndroidRuntime {
           .map((line) => line.trim())
           .includes(owned.avd)
       ) {
-        await run(owned.adb, ["-s", owned.serial, "emu", "kill"], 3000);
+        await this.run(
+          owned.adb,
+          ["-s", owned.serial, "emu", "kill"],
+          3000,
+          true,
+        );
         return;
       }
     } catch {
@@ -698,10 +807,11 @@ export class AndroidRuntime {
       owned.child.pid &&
       owned.child.exitCode === null
     ) {
-      await run(
+      await this.run(
         "taskkill",
         ["/PID", String(owned.child.pid), "/T", "/F"],
         3000,
+        true,
       ).catch(() => undefined);
     }
     owned.child.kill();
@@ -716,7 +826,14 @@ export class AndroidRuntime {
     this.ownedEmulators.clear();
     this.disposal = Promise.all(
       owned.map((emulator) => this.stopEmulator(emulator)),
-    ).then(() => undefined);
+    ).then(async () => {
+      if (this.privateAdbSocket && this.usedPrivateAdb) {
+        // Use the exact binary and private environment previously invoked here.
+        await this.run(this.usedPrivateAdb, ["kill-server"], 3000, true).catch(
+          () => undefined,
+        );
+      }
+    });
     return this.disposal;
   }
 }

@@ -10,7 +10,6 @@ import {
   Circle,
   CircleAlert,
   ExternalLink,
-  FolderOpen,
   HardDrive,
   Import,
   LayoutGrid,
@@ -26,7 +25,6 @@ import {
   ShieldCheck,
   Smartphone,
   Sparkles,
-  Terminal,
   Trash2,
   Tv,
   Upload,
@@ -48,6 +46,11 @@ type Notice = {
   details?: string[];
 };
 type Confirmation = { type: "remove" | "uninstall"; app: LibraryApp };
+type ManagedRequest = {
+  action: "prepare" | "install" | "launch" | "uninstall";
+  mode: DeviceMode;
+  app?: LibraryApp;
+};
 
 const initialState: AppState = {
   apps: [],
@@ -73,12 +76,17 @@ const modeNames: Record<DeviceMode, string> = { phone: "手机", tv: "电视" };
 const pageNames: Record<Page, string> = {
   desktop: "桌面",
   library: "软件库",
-  settings: "运行环境",
+  settings: "模拟器设置",
 };
 
 function formatSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDownload(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${Math.max(0, bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 
 function AppIcon({ app, large = false }: { app: LibraryApp; large?: boolean }) {
@@ -111,6 +119,16 @@ function App() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [draft, setDraft] = useState<Settings>(initialState.settings);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [preparationRequest, setPreparationRequest] =
+    useState<ManagedRequest | null>(null);
+  const [licenseText, setLicenseText] = useState("");
+  const [licenseError, setLicenseError] = useState("");
+  const [licenseLoading, setLicenseLoading] = useState(false);
+  const [licenseConsent, setLicenseConsent] = useState(false);
+  const [preparingMode, setPreparingMode] = useState<DeviceMode | null>(null);
+  const [cancelRequested, setCancelRequested] = useState(false);
+  const cancelledPreparation = useRef(false);
+  const prepareCancel = useRef<HTMLButtonElement>(null);
   const initialized = useRef(false);
   const refreshSequence = useRef(0);
   const activeOperation = useRef(false);
@@ -200,6 +218,38 @@ function App() {
     return () => window.removeEventListener("click", onClick);
   }, [openMenu]);
 
+  useEffect(() => {
+    if (!preparationRequest || !api) return;
+    let mounted = true;
+    setLicenseConsent(false);
+    setLicenseText("");
+    setLicenseError("");
+    setLicenseLoading(true);
+    prepareCancel.current?.focus();
+    api
+      .getRuntimeLicense()
+      .then((text) => {
+        if (mounted) setLicenseText(text);
+      })
+      .catch((error) => {
+        if (mounted)
+          setLicenseError(
+            error instanceof Error ? error.message : String(error),
+          );
+      })
+      .finally(() => {
+        if (mounted) setLicenseLoading(false);
+      });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreparationRequest(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      mounted = false;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [preparationRequest, api]);
+
   const selectedAvd =
     mode === "phone" ? state.settings.phoneAvd : state.settings.tvAvd;
   const isInstalled = (app: LibraryApp) =>
@@ -208,12 +258,19 @@ function App() {
   const activeDevice = state.runtime.devices.find(
     (device) => device.avd === selectedAvd && device.state === "device",
   );
-  const environmentReady =
-    state.runtime.adbFound &&
-    state.runtime.emulatorFound &&
-    state.runtime.scrcpyFound &&
-    !!selectedAvd &&
-    state.runtime.avds.includes(selectedAvd);
+  const managed = state.managed;
+  const modeReady = (deviceMode: DeviceMode) =>
+    !!managed?.coreReady &&
+    !!(deviceMode === "phone" ? managed.phoneReady : managed.tvReady);
+  const environmentReady = modeReady(mode);
+  const isPreparing = preparingMode !== null || !!managed?.preparing;
+  const progressPercent =
+    progress?.totalBytes && progress.completedBytes !== undefined
+      ? Math.min(
+          100,
+          Math.max(0, (progress.completedBytes / progress.totalBytes) * 100),
+        )
+      : undefined;
   const totalSize = state.apps.reduce((total, app) => total + app.size, 0);
   const baseApps = page === "desktop" ? installedApps : state.apps;
   const shownApps = baseApps.filter((app) => {
@@ -233,7 +290,7 @@ function App() {
       type: "info",
       title: "请在 APK Checker 桌面应用中操作",
       details: [
-        "当前是界面预览。导入、安装和运行 APK 需要桌面应用连接本机 Android 环境。",
+        "当前是界面预览。请打开 APK Checker 桌面应用导入文件，模拟器系统会由应用自动准备。",
       ],
     });
 
@@ -249,6 +306,8 @@ function App() {
     }
     activeOperation.current = true;
     setBusy(key);
+    cancelledPreparation.current = false;
+    setCancelRequested(false);
     setProgress(null);
     setNotice(null);
     setOpenMenu(null);
@@ -258,14 +317,25 @@ function App() {
       await refresh();
       setNotice({ type: "success", title: success });
     } catch (error) {
-      setNotice({
-        type: "error",
-        title: "操作未完成",
-        details: [error instanceof Error ? error.message : String(error)],
-      });
+      await refresh().catch(() => undefined);
+      setNotice(
+        cancelledPreparation.current
+          ? {
+              type: "info",
+              title: "准备已取消",
+              details: ["稍后可重新准备模拟器系统。"],
+            }
+          : {
+              type: "error",
+              title: "操作未完成",
+              details: [error instanceof Error ? error.message : String(error)],
+            },
+      );
     } finally {
       setBusy(null);
       setProgress(null);
+      setPreparingMode(null);
+      setCancelRequested(false);
       activeOperation.current = false;
     }
   }
@@ -296,7 +366,7 @@ function App() {
             : "导入未完成",
           details: result.errors.length
             ? result.errors
-            : [result.error || "请检查 APK 文件和运行环境。"],
+            : [result.error || "请检查 APK 文件是否完整。"],
         });
       } else if (result.imported)
         setNotice({
@@ -335,26 +405,96 @@ function App() {
         setState((previous) => ({ ...previous, runtime }));
         return { ok: true };
       },
-      "运行环境已刷新",
+      "模拟器状态已刷新",
     );
   }
-  async function choosePath(kind: "sdk" | "scrcpy") {
+  function requestManagedAction(request: ManagedRequest) {
+    if (activeOperation.current || loading) return;
     if (!api) {
       explainPreview();
       return;
     }
-    try {
-      const path = await api.choosePath(kind);
-      if (path)
-        setDraft((previous) => ({
-          ...previous,
-          [kind === "sdk" ? "sdkPath" : "scrcpyPath"]: path,
-        }));
-    } catch (error) {
+    if (!managed) {
       setNotice({
         type: "error",
-        title: "无法选择路径",
-        details: [String(error)],
+        title: "无法读取模拟器状态",
+        details: ["请刷新模拟器状态后重试。"],
+      });
+      return;
+    }
+    if (!managed.supported) {
+      setNotice({
+        type: "error",
+        title: "当前系统暂不支持模拟器",
+        details: [managed.error || "仍可导入和管理 APK 文件。"],
+      });
+      return;
+    }
+    if (!managed.licenseAccepted) {
+      setPreparationRequest(request);
+      return;
+    }
+    void executeManagedAction(request, false);
+  }
+
+  async function executeManagedAction(
+    request: ManagedRequest,
+    acceptLicense: boolean,
+  ) {
+    if (!api) {
+      explainPreview();
+      return;
+    }
+    const { action, mode: requestedMode, app } = request;
+    const success =
+      action === "prepare"
+        ? `${modeNames[requestedMode]}模拟器已准备好`
+        : action === "install"
+          ? `${app!.name} 已安装到${modeNames[requestedMode]}桌面`
+          : action === "launch"
+            ? `${app!.name} 已在独立窗口打开`
+            : "应用已卸载";
+    await runAction(
+      `${action}-${app?.id || requestedMode}`,
+      async () => {
+        if (!modeReady(requestedMode) || acceptLicense) {
+          setPreparingMode(requestedMode);
+          try {
+            const prepared = await api.prepareEnvironment(
+              requestedMode,
+              acceptLicense,
+            );
+            if (!prepared.ok) return prepared;
+            if (cancelledPreparation.current)
+              return { ok: false, error: "准备已取消" };
+          } finally {
+            setPreparingMode(null);
+          }
+        }
+        if (action === "prepare") return { ok: true };
+        if (action === "install") return api.installApp(app!.id, requestedMode);
+        if (action === "launch") return api.launchApp(app!.id, requestedMode);
+        return api.uninstallApp(app!.id, requestedMode);
+      },
+      success,
+    );
+  }
+
+  async function cancelPreparation() {
+    if (!api || cancelRequested) return;
+    cancelledPreparation.current = true;
+    setCancelRequested(true);
+    try {
+      const result = await api.cancelPreparation();
+      if (!result.ok)
+        throw new Error(result.error || "无法取消准备，请稍后重试。");
+    } catch (error) {
+      cancelledPreparation.current = false;
+      setCancelRequested(false);
+      setNotice({
+        type: "error",
+        title: "取消未完成",
+        details: [error instanceof Error ? error.message : String(error)],
       });
     }
   }
@@ -408,7 +548,7 @@ function App() {
             aria-current={page === "settings" ? "page" : undefined}
           >
             <Settings2 size={19} />
-            <span>运行环境</span>
+            <span>模拟器设置</span>
           </button>
         </nav>
         <div className="sidebar-note">
@@ -434,7 +574,8 @@ function App() {
           >
             <span className={`status-dot ${environmentReady ? "green" : ""}`} />
             <span>
-              运行环境<small>{environmentReady ? "已就绪" : "等待配置"}</small>
+              模拟器
+              <small>{environmentReady ? "已就绪" : "首次使用自动准备"}</small>
             </span>
             <ArrowRight size={15} />
           </button>
@@ -469,7 +610,7 @@ function App() {
                   ? "YOUR ANDROID WORKSPACE"
                   : page === "library"
                     ? "APPLICATION LIBRARY"
-                    : "RUNTIME CONFIGURATION"}
+                    : "EMULATOR SETTINGS"}
               </div>
               <h1>
                 {pageNames[page]}
@@ -480,7 +621,7 @@ function App() {
                   ? "所有已安装的应用，随时点开，在独立窗口体验。"
                   : page === "library"
                     ? "把 APK 放进来，让每个应用都有自己的位置。"
-                    : "连接你的 Android 环境，准备好下一次运行。"}
+                    : "系统自动准备，应用自由体验。"}
               </p>
             </div>
             <button
@@ -498,17 +639,61 @@ function App() {
           </header>
 
           {busy && (
-            <div className="operation-banner" role="status">
-              <LoaderCircle className="spin" size={17} />
-              <span>
-                {progress?.message ||
-                  (busy === "import"
-                    ? "正在导入 APK…"
-                    : busy === "refresh"
-                      ? "正在检查运行环境…"
-                      : "正在处理，请稍候…")}
-              </span>
-              <small>首次启动虚拟设备可能需要几分钟</small>
+            <div className="operation-banner managed-progress" role="status">
+              <div className="operation-message">
+                <LoaderCircle className="spin" size={17} />
+                <span>
+                  {progress?.message ||
+                    (busy === "import"
+                      ? "正在导入 APK…"
+                      : busy === "refresh"
+                        ? "正在检查模拟器状态…"
+                        : isPreparing
+                          ? "正在准备模拟器系统…"
+                          : "正在处理，请稍候…")}
+                </span>
+                {isPreparing && (
+                  <button
+                    className="text-button"
+                    onClick={cancelPreparation}
+                    disabled={cancelRequested}
+                  >
+                    {cancelRequested ? "正在取消…" : "取消准备"}
+                  </button>
+                )}
+              </div>
+              {isPreparing && (
+                <div className="download-progress">
+                  <div
+                    className="download-track"
+                    role="progressbar"
+                    aria-label="模拟器准备进度"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={
+                      progressPercent === undefined
+                        ? undefined
+                        : Math.round(progressPercent)
+                    }
+                  >
+                    <span
+                      className={
+                        progressPercent === undefined ? "indeterminate" : ""
+                      }
+                      style={
+                        progressPercent === undefined
+                          ? undefined
+                          : { width: `${progressPercent}%` }
+                      }
+                    />
+                  </div>
+                  <span>
+                    {progressPercent !== undefined
+                      ? `${formatDownload(progress!.completedBytes!)} / ${formatDownload(progress!.totalBytes!)}`
+                      : "正在下载、校验或解压所需文件"}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -544,13 +729,13 @@ function App() {
                   />
                   {activeDevice
                     ? "设备运行中"
-                    : selectedAvd
-                      ? "设备待启动"
-                      : "尚未选择设备"}
+                    : environmentReady
+                      ? "模拟器待启动"
+                      : "首次使用自动准备"}
                   <span className="device-status-divider" />
                   <button
                     onClick={() => navigate("settings")}
-                    aria-label="配置运行设备"
+                    aria-label="模拟器设置"
                   >
                     <Settings2 size={15} />
                   </button>
@@ -695,17 +880,11 @@ function App() {
                           }
                           disabled={disabled}
                           onClick={() =>
-                            isInstalled(app)
-                              ? runAction(
-                                  `launch-${app.id}`,
-                                  () => api!.launchApp(app.id, mode),
-                                  `${app.name} 已在独立窗口打开`,
-                                )
-                              : runAction(
-                                  `install-${app.id}`,
-                                  () => api!.installApp(app.id, mode),
-                                  `${app.name} 已安装到${modeNames[mode]}桌面`,
-                                )
+                            requestManagedAction({
+                              action: isInstalled(app) ? "launch" : "install",
+                              mode,
+                              app,
+                            })
                           }
                         >
                           {busy?.endsWith(app.id) ? (
@@ -815,7 +994,7 @@ function App() {
                       className="text-button"
                       onClick={() => navigate("settings")}
                     >
-                      配置运行环境
+                      模拟器设置
                       <ArrowRight size={15} />
                     </button>
                   </div>
@@ -858,9 +1037,9 @@ function App() {
                       </span>
                       <div>
                         <h3>
-                          <span>02</span>选择设备并安装
+                          <span>02</span>选择模式并安装
                         </h3>
-                        <p>配置手机或电视设备，安装你的应用</p>
+                        <p>选择手机或电视，系统会自动准备</p>
                       </div>
                       <ArrowRight className="step-arrow" size={16} />
                     </button>
@@ -899,16 +1078,18 @@ function App() {
           )}
 
           {page === "settings" && (
-            <div className="settings-layout">
-              <section className="settings-card environment-card">
+            <div className="managed-settings">
+              <section className="managed-intro settings-card">
                 <div className="settings-section-heading">
                   <div className="settings-title">
                     <span className="settings-icon">
-                      <Terminal size={19} />
+                      <Sparkles size={20} />
                     </span>
                     <div>
-                      <h2>环境检查</h2>
-                      <p>运行真实的 Android 应用，需要以下本机组件。</p>
+                      <h2>打开应用，其余交给模拟器</h2>
+                      <p>
+                        导入 APK 即可管理，首次安装时自动准备所选 Android 系统。
+                      </p>
                     </div>
                   </div>
                   <button
@@ -920,72 +1101,128 @@ function App() {
                       size={14}
                       className={busy === "refresh" ? "spin" : ""}
                     />
-                    重新检测
+                    刷新状态
                   </button>
                 </div>
-                <div className="dependency-list">
-                  {[
-                    {
-                      name: "Android SDK",
-                      detail: "Android 开发工具目录",
-                      ok: state.runtime.sdkFound,
-                    },
-                    {
-                      name: "ADB",
-                      detail: "设备连接与应用安装",
-                      ok: state.runtime.adbFound,
-                    },
-                    {
-                      name: "Android Emulator",
-                      detail: "手机与电视虚拟设备",
-                      ok: state.runtime.emulatorFound,
-                    },
-                    {
-                      name: "AAPT",
-                      detail: "读取 APK 名称与包信息",
-                      ok: state.runtime.aaptFound,
-                    },
-                    {
-                      name: "scrcpy",
-                      detail: "独立窗口显示与交互",
-                      ok: state.runtime.scrcpyFound,
-                    },
-                  ].map((dependency) => (
-                    <div className="dependency" key={dependency.name}>
-                      <div
-                        className={`dependency-check ${dependency.ok ? "ready" : ""}`}
-                      >
-                        {dependency.ok ? (
-                          <Check size={15} />
-                        ) : (
-                          <Circle size={13} />
-                        )}
-                      </div>
-                      <div>
-                        <strong>{dependency.name}</strong>
-                        <span>{dependency.detail}</span>
-                      </div>
-                      <span
-                        className={`dependency-tag ${dependency.ok ? "ready" : ""}`}
-                      >
-                        {dependency.ok ? "已就绪" : "未检测到"}
-                      </span>
-                    </div>
-                  ))}
+                <div className="managed-capabilities">
+                  <div>
+                    <CheckCircle2 size={19} />
+                    <strong>APK 解析已内置</strong>
+                    <span>无需安装开发工具，直接导入文件</span>
+                  </div>
+                  <div>
+                    <Box size={19} />
+                    <strong>运行文件自动管理</strong>
+                    <span>应用负责准备、校验和保存所需组件</span>
+                  </div>
+                  <div>
+                    <HardDrive size={19} />
+                    <strong>准备一次，保留在本机</strong>
+                    <span>系统准备完成后可离线启动</span>
+                  </div>
                 </div>
-                {state.runtime.issues.length > 0 && (
-                  <div className="runtime-issues">
+                {!api && (
+                  <p className="managed-preview-note">
+                    当前是浏览器界面预览；请在桌面应用中准备和运行模拟器。
+                  </p>
+                )}
+                {managed?.supported === false && (
+                  <div className="runtime-issues" role="alert">
                     <CircleAlert size={16} />
-                    <div>
-                      {state.runtime.issues.map((issue, index) => (
-                        <p key={index}>{issue}</p>
-                      ))}
-                    </div>
+                    <p>
+                      {managed.error ||
+                        "当前操作系统或处理器暂不支持模拟器，仍可导入 APK。"}
+                    </p>
+                  </div>
+                )}
+                {managed?.error && managed.supported && (
+                  <div className="runtime-issues" role="alert">
+                    <CircleAlert size={16} />
+                    <p>{managed.error}</p>
                   </div>
                 )}
               </section>
+              <div className="managed-device-grid">
+                {(["phone", "tv"] as const).map((deviceMode) => {
+                  const ready = modeReady(deviceMode);
+                  const preparing =
+                    preparingMode === deviceMode ||
+                    managed?.preparing === deviceMode;
+                  const downloadBytes = managed?.downloadBytes[deviceMode] || 0;
+                  return (
+                    <section
+                      className={`settings-card managed-device-card ${deviceMode}`}
+                      key={deviceMode}
+                    >
+                      <div className="managed-device-heading">
+                        <span className="managed-device-icon">
+                          {deviceMode === "phone" ? (
+                            <Smartphone size={29} />
+                          ) : (
+                            <Tv size={32} />
+                          )}
+                        </span>
+                        <span
+                          className={`dependency-tag ${ready ? "ready" : ""}`}
+                        >
+                          {preparing ? "准备中" : ready ? "已就绪" : "待准备"}
+                        </span>
+                      </div>
+                      <h2>{modeNames[deviceMode]}模拟器</h2>
+                      <p>
+                        {deviceMode === "phone"
+                          ? "适合触摸操作与手机应用"
+                          : "适合大屏应用与方向键操作"}
+                      </p>
+                      <div className="managed-device-detail">
+                        <span>系统</span>
+                        <strong>
+                          {deviceMode === "phone"
+                            ? "Android 11"
+                            : "Android TV 16"}
+                        </strong>
+                      </div>
+                      <div className="managed-device-detail">
+                        <span>{ready ? "启动方式" : "预计下载"}</span>
+                        <strong>
+                          {ready
+                            ? "可离线启动"
+                            : downloadBytes
+                              ? `约 ${formatDownload(downloadBytes)}`
+                              : "准备前自动检测"}
+                        </strong>
+                      </div>
+                      <button
+                        className={`button ${ready ? "secondary" : "primary"}`}
+                        disabled={
+                          disabled || ready || managed?.supported === false
+                        }
+                        onClick={() =>
+                          requestManagedAction({
+                            action: "prepare",
+                            mode: deviceMode,
+                          })
+                        }
+                      >
+                        {preparing ? (
+                          <LoaderCircle className="spin" size={16} />
+                        ) : ready ? (
+                          <CheckCircle2 size={16} />
+                        ) : (
+                          <ArrowDownToLine size={16} />
+                        )}
+                        {preparing
+                          ? "正在准备…"
+                          : ready
+                            ? "系统已准备好"
+                            : `准备${modeNames[deviceMode]}模式`}
+                      </button>
+                    </section>
+                  );
+                })}
+              </div>
               <form
-                className="settings-card configuration-card"
+                className="settings-card managed-preferences"
                 onSubmit={(event) => {
                   event.preventDefault();
                   runAction(
@@ -995,191 +1232,48 @@ function App() {
                   );
                 }}
               >
-                <div className="settings-section-heading">
-                  <div className="settings-title">
-                    <span className="settings-icon">
-                      <FolderOpen size={19} />
-                    </span>
-                    <div>
-                      <h2>工具与设备</h2>
-                      <p>保存后自动重新检测，可留空工具路径以使用自动发现。</p>
-                    </div>
-                  </div>
+                <div>
+                  <h2>默认运行模式</h2>
+                  <p>下次打开 APK Checker 时优先显示这个桌面。</p>
                 </div>
-                <div className="settings-form">
-                  <label className="form-field">
-                    <span>Android SDK 路径</span>
-                    <div className="path-input">
-                      <input
-                        value={draft.sdkPath}
-                        onChange={(event) =>
-                          setDraft({ ...draft, sdkPath: event.target.value })
-                        }
-                        placeholder="自动检测 ANDROID_HOME 或默认安装目录"
-                        disabled={disabled}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => choosePath("sdk")}
-                        disabled={disabled}
-                        aria-label="选择 Android SDK 目录"
-                      >
-                        <FolderOpen size={17} />
-                      </button>
-                    </div>
-                    <small>
-                      选择包含 platform-tools、emulator 和 build-tools 的 SDK
-                      目录。
-                    </small>
-                  </label>
-                  <label className="form-field">
-                    <span>scrcpy 路径</span>
-                    <div className="path-input">
-                      <input
-                        value={draft.scrcpyPath}
-                        onChange={(event) =>
-                          setDraft({ ...draft, scrcpyPath: event.target.value })
-                        }
-                        placeholder="自动检测 scrcpy 可执行文件"
-                        disabled={disabled}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => choosePath("scrcpy")}
-                        disabled={disabled}
-                        aria-label="选择 scrcpy 可执行文件"
-                      >
-                        <FolderOpen size={17} />
-                      </button>
-                    </div>
-                    <small>
-                      macOS 可使用 Homebrew 安装；Windows 选择 scrcpy.exe。
-                    </small>
-                  </label>
-                  <div className="form-divider" />
-                  <div className="device-fields">
-                    <label className="form-field">
-                      <span>
-                        <Smartphone size={15} />
-                        手机虚拟设备
-                      </span>
-                      <div className="select-wrap">
-                        <select
-                          value={draft.phoneAvd}
-                          onChange={(event) =>
-                            setDraft({ ...draft, phoneAvd: event.target.value })
-                          }
-                          disabled={disabled}
-                        >
-                          <option value="">选择手机 AVD</option>
-                          {Array.from(
-                            new Set([
-                              ...state.runtime.avds,
-                              ...(draft.phoneAvd ? [draft.phoneAvd] : []),
-                            ]),
-                          ).map((avd) => (
-                            <option key={avd} value={avd}>
-                              {avd}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={15} />
-                      </div>
-                    </label>
-                    <label className="form-field">
-                      <span>
-                        <Tv size={16} />
-                        电视虚拟设备
-                      </span>
-                      <div className="select-wrap">
-                        <select
-                          value={draft.tvAvd}
-                          onChange={(event) =>
-                            setDraft({ ...draft, tvAvd: event.target.value })
-                          }
-                          disabled={disabled}
-                        >
-                          <option value="">选择 Android TV AVD</option>
-                          {Array.from(
-                            new Set([
-                              ...state.runtime.avds,
-                              ...(draft.tvAvd ? [draft.tvAvd] : []),
-                            ]),
-                          ).map((avd) => (
-                            <option key={avd} value={avd}>
-                              {avd}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown size={15} />
-                      </div>
-                    </label>
-                  </div>
-                  <p className="field-note">
-                    请先在 Android Studio 的 Device Manager
-                    中创建对应设备。电视模式需要 Android TV 系统镜像。
-                  </p>
-                  <label className="form-field default-mode">
-                    <span>默认运行模式</span>
-                    <div className="select-wrap">
-                      <select
-                        value={draft.defaultMode}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            defaultMode: event.target.value as DeviceMode,
-                          })
-                        }
-                        disabled={disabled}
-                      >
-                        <option value="phone">手机模式</option>
-                        <option value="tv">电视模式</option>
-                      </select>
-                      <ChevronDown size={15} />
-                    </div>
-                  </label>
-                </div>
-                <div className="settings-actions">
-                  <span>
-                    <ShieldCheck size={14} />
-                    设置仅保存在本机
-                  </span>
-                  <button
-                    type="submit"
-                    className="button primary"
+                <label className="select-wrap">
+                  <span className="visually-hidden">默认运行模式</span>
+                  <select
+                    aria-label="默认运行模式"
+                    value={draft.defaultMode}
                     disabled={disabled}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        defaultMode: event.target.value as DeviceMode,
+                      })
+                    }
                   >
-                    {busy === "settings" ? (
-                      <LoaderCircle size={15} className="spin" />
-                    ) : (
-                      <Check size={16} />
-                    )}
-                    保存设置
-                  </button>
-                </div>
+                    <option value="phone">手机模式</option>
+                    <option value="tv">电视模式</option>
+                  </select>
+                  <ChevronDown size={15} />
+                </label>
+                <button
+                  type="submit"
+                  className="button primary"
+                  disabled={disabled}
+                >
+                  <Check size={16} />
+                  保存设置
+                </button>
               </form>
-              <aside className="settings-help">
-                <div className="settings-help-title">
-                  <Monitor size={19} />
-                  <h3>准备好你的运行环境</h3>
-                </div>
-                <p>
-                  支持 macOS（Apple Silicon / Intel）与
-                  Windows。虚拟设备镜像架构需要与电脑匹配。
-                </p>
-                <ol>
-                  <li>
-                    安装 Android Studio，并安装 SDK Platform-Tools、Emulator 与
-                    Build-Tools。
-                  </li>
-                  <li>在 Device Manager 创建手机设备和 Android TV 设备。</li>
-                  <li>安装 scrcpy，配置路径并选择对应的虚拟设备。</li>
-                </ol>
-                <div className="help-note">
-                  <CircleAlert size={15} />
+              <aside className="managed-help">
+                <Monitor size={19} />
+                <div>
+                  <h3>自动准备，无需配置路径</h3>
                   <p>
-                    APK 能否运行取决于其 Android 版本、CPU
-                    架构和电视适配情况。同一模式共用一台虚拟设备，打开其他应用会切换该设备的显示窗口。更换设备后，如需卸载原设备中的应用，请先重新选择原设备。
+                    首次使用需要联网下载 Android
+                    核心和系统镜像，并接受适用许可；请预留足够的磁盘空间。下载后由应用自动校验和创建模拟器，之后无需再次下载完整系统。
+                  </p>
+                  <p>
+                    同一模式共用一台模拟器，打开其他应用会切换前台画面。APK
+                    能否运行取决于 Android 版本、原生库架构及电视适配情况。
                   </p>
                 </div>
               </aside>
@@ -1220,6 +1314,130 @@ function App() {
           >
             <X size={17} />
           </button>
+        </div>
+      )}
+      {preparationRequest && (
+        <div
+          className="modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget)
+              setPreparationRequest(null);
+          }}
+        >
+          <div
+            className="confirm-dialog prepare-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prepare-title"
+            aria-describedby="prepare-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              const controls = Array.from(
+                event.currentTarget.querySelectorAll<HTMLElement>(
+                  'button:not(:disabled), input:not(:disabled), summary, [tabindex="0"]',
+                ),
+              );
+              const first = controls[0];
+              const last = controls[controls.length - 1];
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last?.focus();
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first?.focus();
+              }
+            }}
+          >
+            <span className="prepare-icon">
+              {preparationRequest.mode === "phone" ? (
+                <Smartphone size={27} />
+              ) : (
+                <Tv size={29} />
+              )}
+            </span>
+            <h2 id="prepare-title">
+              准备{modeNames[preparationRequest.mode]}模拟器
+            </h2>
+            <p id="prepare-description">
+              {modeReady(preparationRequest.mode) ? (
+                "系统文件已保存在本机，请确认当前许可后继续。"
+              ) : (
+                <>
+                  应用会从官方来源下载 Android
+                  核心和所选系统，自动校验并保存在本机。
+                  {managed?.downloadBytes[preparationRequest.mode]
+                    ? `本次预计下载约 ${formatDownload(managed.downloadBytes[preparationRequest.mode])}。`
+                    : "系统镜像较大，请保持联网并预留足够磁盘空间。"}
+                  准备完成后可离线启动。
+                </>
+              )}
+            </p>
+            {preparationRequest.app && (
+              <div className="prepare-next">
+                <Package size={16} />
+                <span>
+                  准备后继续
+                  {preparationRequest.action === "install"
+                    ? "安装"
+                    : preparationRequest.action === "launch"
+                      ? "打开"
+                      : "卸载"}
+                  「{preparationRequest.app.name}」
+                </span>
+              </div>
+            )}
+            {licenseLoading ? (
+              <div className="license-loading" role="status">
+                <LoaderCircle className="spin" size={16} />
+                正在读取许可条款…
+              </div>
+            ) : licenseError ? (
+              <div className="runtime-issues" role="alert">
+                <CircleAlert size={16} />
+                <span>{licenseError}</span>
+              </div>
+            ) : (
+              <details className="license-details">
+                <summary>查看 Android 运行环境许可条款</summary>
+                <pre tabIndex={0}>{licenseText}</pre>
+              </details>
+            )}
+            <label className="license-consent">
+              <input
+                type="checkbox"
+                checked={licenseConsent}
+                disabled={licenseLoading || !!licenseError || !licenseText}
+                onChange={(event) => setLicenseConsent(event.target.checked)}
+              />
+              <span>我已阅读并同意上述许可条款</span>
+            </label>
+            <div className="confirm-actions">
+              <button
+                ref={prepareCancel}
+                className="button secondary"
+                onClick={() => setPreparationRequest(null)}
+              >
+                暂不准备
+              </button>
+              <button
+                className="button primary"
+                disabled={
+                  !licenseConsent ||
+                  licenseLoading ||
+                  !!licenseError ||
+                  !licenseText
+                }
+                onClick={() => {
+                  const request = preparationRequest;
+                  setPreparationRequest(null);
+                  void executeManagedAction(request, true);
+                }}
+              >
+                <ArrowDownToLine size={16} />
+                同意并准备
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {confirmation && (
@@ -1276,16 +1494,18 @@ function App() {
                 onClick={() => {
                   const current = confirmation;
                   setConfirmation(null);
-                  runAction(
-                    `${current.type}-${current.app.id}`,
-                    () =>
-                      current.type === "remove"
-                        ? api!.removeApp(current.app.id)
-                        : api!.uninstallApp(current.app.id, mode),
-                    current.type === "remove"
-                      ? "已从软件库移除应用"
-                      : "应用已卸载",
-                  );
+                  if (current.type === "uninstall")
+                    requestManagedAction({
+                      action: "uninstall",
+                      mode,
+                      app: current.app,
+                    });
+                  else
+                    runAction(
+                      `remove-${current.app.id}`,
+                      () => api!.removeApp(current.app.id),
+                      "已从软件库移除应用",
+                    );
                 }}
               >
                 {confirmation.type === "remove" ? "确认移除" : "确认卸载"}
