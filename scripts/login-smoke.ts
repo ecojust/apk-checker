@@ -238,9 +238,9 @@ function decodeEntities(value: string): string {
 function nodes(xml: string): Record<string, string>[] {
   return [...xml.matchAll(/<node\b([^>]+)>/g)].map((match) =>
     Object.fromEntries(
-      [...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((value) => [
+      [...match[1].matchAll(/([\w-]+)=(?:"([^"]*)"|'([^']*)')/g)].map((value) => [
         value[1],
-        decodeEntities(value[2]),
+        decodeEntities(value[2] ?? value[3]),
       ]),
     ),
   );
@@ -480,6 +480,40 @@ function blackFraction(image: Png, rect: Rectangle): number {
   return black / total;
 }
 
+export function compareDisplayOrientation(
+  guest: Png,
+  host: Png,
+  window: Rectangle,
+): { normalDifference: number; invertedDifference: number; sampleCount: number } {
+  const pixel = (image: Png, x: number, y: number) => {
+    const xx = Math.round(x), yy = Math.round(y);
+    assert(xx >= 0 && xx < image.width && yy >= 0 && yy < image.height,
+      "Display comparison sample falls outside the captured image");
+    const offset = (yy * image.width + xx) * image.channels;
+    return image.pixels.subarray(offset, offset + 3);
+  };
+  let normal = 0, inverted = 0, sampleCount = 0;
+  // Compare the actual non-secure settings view in both images. Aspect ratio
+  // alone cannot distinguish an upright display from an upside-down one.
+  for (let row = 0; row < 27; row++) {
+    for (let column = 0; column < 48; column++) {
+      const u = (column + 0.5) / 48, v = (row + 0.5) / 27;
+      const reference = pixel(guest, u * (guest.width - 1), v * (guest.height - 1));
+      const straight = pixel(host, window.x + u * (window.width - 1),
+        window.y + v * (window.height - 1));
+      const reversed = pixel(host, window.x + (1 - u) * (window.width - 1),
+        window.y + (1 - v) * (window.height - 1));
+      for (let channel = 0; channel < 3; channel++) {
+        normal += Math.abs(reference[channel] - straight[channel]);
+        inverted += Math.abs(reference[channel] - reversed[channel]);
+      }
+      sampleCount++;
+    }
+  }
+  return { normalDifference: normal / (sampleCount * 3),
+    invertedDifference: inverted / (sampleCount * 3), sampleCount };
+}
+
 export async function probeProtectedLogin(
   context: LoginProbeContext,
 ): Promise<unknown> {
@@ -511,6 +545,8 @@ export async function probeProtectedLogin(
     await context.screenshot("login-02-settings-guest.png");
     let settingsHost = await captureNativeHost(context, "login-02-settings");
     let settingsImage = await readPng(path.join(context.artifacts, "login-02-settings-guest.png"));
+    const rotations: unknown[] = [];
+    result.nativeDisplayRotations = rotations;
     const aligned = () => Math.abs(settingsImage.width / settingsImage.height -
       settingsHost.window.width / settingsHost.window.height) /
       (settingsImage.width / settingsImage.height) < 0.1;
@@ -522,8 +558,6 @@ export async function probeProtectedLogin(
         (settingsImage.width / settingsImage.height);
       assert(reciprocalDifference < 0.1 && context.rotateNativeDisplay,
         "Native display cannot be safely aligned using the observed reciprocal aspect ratio");
-      const rotations: unknown[] = [];
-      result.nativeDisplayRotations = rotations;
       for (let count = 1; count <= 3 && !aligned(); count++) {
         await context.rotateNativeDisplay();
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -536,6 +570,29 @@ export async function probeProtectedLogin(
       }
       assert(aligned(), "Native emulator rotation did not align host and Android aspect ratios");
     }
+    let orientation = compareDisplayOrientation(settingsImage,
+      await readPng(settingsHost.image), settingsHost.window);
+    const initialOrientation = orientation;
+    let correctedHalfTurn = false;
+    if (orientation.invertedDifference + 3 < orientation.normalDifference) {
+      assert(context.rotateNativeDisplay, "Native display is upside down and cannot be rotated");
+      for (let count = 0; count < 2; count++) {
+        await context.rotateNativeDisplay();
+        rotations.push({ operation: "Native emulator console rotate clockwise",
+          count: rotations.length + 1, reason: "Actual guest/host pixels match a half-turn" });
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      await context.screenshot("login-02-settings-guest.png");
+      settingsImage = await readPng(path.join(context.artifacts, "login-02-settings-guest.png"));
+      settingsHost = await captureNativeHost(context, "login-02-settings-upright");
+      assert(aligned(), "Native display lost its matching aspect ratio after half-turn correction");
+      orientation = compareDisplayOrientation(settingsImage,
+        await readPng(settingsHost.image), settingsHost.window);
+      correctedHalfTurn = true;
+    }
+    result.nativeOrientation = { initial: initialOrientation, final: orientation, correctedHalfTurn };
+    assert(orientation.normalDifference + 3 < orientation.invertedDifference,
+      "Actual guest/host settings pixels do not verify an upright native display");
     // Rotation can relayout controls, so use fresh semantic bounds for the tap.
     const alignedSettings = await ui(context, "login-02-settings-aligned");
     const alignedAccount = alignedSettings.find(

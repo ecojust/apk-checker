@@ -127,24 +127,27 @@ function attributes(xml: string): Node[] {
     "&gt;": ">",
     "&apos;": "'",
   };
-  return [...xml.matchAll(/<node\b([^>]+)>/g)].map((node) =>
-    Object.fromEntries(
-      [...node[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((attr) => [
-        attr[1],
-        attr[2].replace(
-          /&(?:quot|amp|lt|gt|apos|#\d+|#x[\da-fA-F]+);/g,
-          (entity) => {
-            if (entities[entity] !== undefined) return entities[entity];
-            const point = entity.startsWith("&#x")
-              ? Number.parseInt(entity.slice(3, -1), 16)
-              : Number.parseInt(entity.slice(2, -1), 10);
-            return point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
-              ? String.fromCodePoint(point)
-              : entity;
-          },
-        ),
-      ]),
-    ),
+  // Android's KXmlSerializer switches an attribute to single-quote delimiters
+  // when its value contains a double quote. Either delimiter may also contain >.
+  return [...xml.matchAll(/<node\b((?:[^"'<>]|"[^"]*"|'[^']*')*)\/?\s*>/g)].map(
+    (node) =>
+      Object.fromEntries(
+        [...node[1].matchAll(/([\w:-]+)\s*=\s*(["'])(.*?)\2/gs)].map((attr) => [
+          attr[1],
+          attr[3].replace(
+            /&(?:quot|amp|lt|gt|apos|#\d+|#x[\da-fA-F]+);/g,
+            (entity) => {
+              if (entities[entity] !== undefined) return entities[entity];
+              const point = entity.startsWith("&#x")
+                ? Number.parseInt(entity.slice(3, -1), 16)
+                : Number.parseInt(entity.slice(2, -1), 10);
+              return point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+                ? String.fromCodePoint(point)
+                : entity;
+            },
+          ),
+        ]),
+      ),
   );
 }
 async function ui(context: LoginProbeContext, name: string): Promise<Node[]> {
@@ -190,6 +193,11 @@ async function focusEmptySearch(
     input?.class === "android.widget.EditText" && input.password !== "true",
     "Only the public Maidong search EditText may receive probe text",
   );
+  assert.equal(
+    typeof input.text,
+    "string",
+    "Search text attribute is missing; the input cannot be assumed empty",
+  );
   // Keep existing keyboard focus. Tapping Maidong's clear action entered touch
   // mode and did not clear the real CI field, despite its source onClick handler.
   if (input.focused !== "true") await tap(context, input);
@@ -197,10 +205,16 @@ async function focusEmptySearch(
   nodes = await ui(context, `${name}-before-delete`);
   input = find(nodes, "search_input");
   assert(input?.focused === "true" && input.password !== "true");
+  assert.equal(
+    typeof input.text,
+    "string",
+    "Search text attribute is missing before clearing",
+  );
   const empty = (node: Node) =>
-    !node.text ||
-    node.text === node.hint ||
-    node.text === "搜索  输入首字母搜索";
+    typeof node.text === "string" &&
+    (!node.text ||
+      node.text === node.hint ||
+      node.text === "搜索  输入首字母搜索");
   if (!empty(input)) {
     const clearing: Record<string, unknown> = { before: input.text };
     detail.clearing = clearing;
@@ -284,9 +298,35 @@ async function verifySearchText(
 ): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 700));
   const after = await ui(context, `${name}-after`);
-  const actual = find(after, "search_input")?.text;
+  const input = find(after, "search_input");
+  const actual = input?.text;
   detail.expected = expected;
   detail.actual = actual;
+  if (!input || typeof input.text !== "string") {
+    const reason = !input ? "nodeMissing" : "textAttributeMissing";
+    detail.missingSearch = await captureMissingSearch(
+      context,
+      name,
+      after,
+      reason,
+    );
+    await context.screenshot(`${name}-guest.png`).catch((error) => {
+      detail.screenshotError = String(error);
+    });
+    await captureNativeHost(context, `${name}-after`)
+      .then((host) => {
+        Object.assign(detail, {
+          hostWindow: host.window,
+          hostImage: host.image,
+        });
+      })
+      .catch((error) => {
+        detail.hostCaptureError = String(error);
+      });
+    assert.fail(
+      `${name} ${reason === "nodeMissing" ? "search EditText node" : "search text attribute"} is absent from the parsed UI dump; text transfer outcome is unobserved (see missingSearch diagnostics)`,
+    );
+  }
   await context.screenshot(`${name}-guest.png`);
   const host = await captureNativeHost(context, `${name}-after`);
   Object.assign(detail, {
@@ -299,6 +339,78 @@ async function verifySearchText(
     expected,
     `${name} text did not reach the Android search EditText`,
   );
+}
+
+async function captureMissingSearch(
+  context: LoginProbeContext,
+  name: string,
+  nodes: Node[],
+  reason: "nodeMissing" | "textAttributeMissing",
+): Promise<Record<string, unknown>> {
+  const commands = [
+    ["activity", ["dumpsys", "activity", "activities"]],
+    ["window", ["dumpsys", "window", "windows"]],
+    ["pid", ["pidof", "com.local.ktv"]],
+    ["logcat", ["logcat", "-d", "-t", "200", "-v", "brief"]],
+  ] as const;
+  const outputs: Record<string, string> = {};
+  const errors: Record<string, string> = {};
+  await Promise.all(
+    commands.map(async ([kind, args]) => {
+      try {
+        outputs[kind] = await context.shell(...args);
+      } catch (error) {
+        outputs[kind] = "";
+        errors[kind] = String(error);
+      }
+      await writeFile(
+        path.join(context.artifacts, `${name}-missing-${kind}.txt`),
+        outputs[kind] || errors[kind] || "",
+      );
+    }),
+  );
+  const lines = (output: string, pattern: RegExp, count: number) =>
+    output
+      .split(/\r?\n/)
+      .filter((line) => pattern.test(line))
+      .slice(-count);
+  const diagnostic = {
+    reason,
+    observedAt: new Date().toISOString(),
+    nodeCount: nodes.length,
+    nodes: nodes
+      .filter((node) => node.text || node["resource-id"])
+      .slice(0, 24)
+      .map((node) => ({
+        package: node.package,
+        id: node["resource-id"],
+        class: node.class,
+        text: node.text,
+        focused: node.focused,
+      })),
+    activity: lines(
+      outputs.activity,
+      /ResumedActivity|topResumedActivity|mFocusedApp/,
+      4,
+    ),
+    window: lines(
+      outputs.window,
+      /mCurrentFocus|mFocusedApp|mInputMethodTarget|mImeInputTarget|mTopFocusedDisplayId/,
+      8,
+    ),
+    pid: outputs.pid.trim(),
+    logcat: lines(
+      outputs.logcat,
+      /FATAL EXCEPTION|AndroidRuntime|SQLite|WindowManager|Exception|\bError\b/i,
+      24,
+    ),
+    errors,
+  };
+  await writeFile(
+    path.join(context.artifacts, `${name}-missing-search.json`),
+    JSON.stringify(diagnostic, null, 2),
+  );
+  return diagnostic;
 }
 async function assertSearchFocused(
   context: LoginProbeContext,
@@ -340,6 +452,10 @@ function compactDiagnostic(
       const focus = detail?.focusNavigation as
         Record<string, unknown>[] | undefined;
       const checks = detail?.checks as Record<string, unknown>[] | undefined;
+      const missing = record(
+        detail?.missingSearch ??
+          checks?.find((check) => check.missingSearch)?.missingSearch,
+      );
       compact[stage] = {
         status: detail?.status,
         expected: clip(detail?.expected, budget),
@@ -361,6 +477,22 @@ function compactDiagnostic(
           expected: clip(check.expected, budget),
           actual: clip(check.actual, budget),
         })),
+        missingSearch: missing && {
+          reason: missing.reason,
+          nodeCount: missing.nodeCount,
+          pid: clip(missing.pid, 32),
+          activity: clip((missing.activity as string[]).join("; "), budget),
+          window: clip((missing.window as string[]).join("; "), budget),
+          nodes: (missing.nodes as Record<string, unknown>[])
+            .slice(0, 4)
+            .map((node) => ({
+              package: clip(node.package, 48),
+              id: clip(node.id, 64),
+              text: clip(node.text, budget),
+            })),
+          logcat: clip((missing.logcat as string[]).join("; "), budget),
+          errors: clip(JSON.stringify(missing.errors), budget),
+        },
       };
     }
     compact.errors = (result.errors as { stage: string; error: string }[])

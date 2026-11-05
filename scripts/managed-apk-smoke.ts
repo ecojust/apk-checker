@@ -693,6 +693,7 @@ async function run(): Promise<void> {
             redactionVerified: (login.guestCapture as Record<string, unknown>).redactionVerified,
           },
           nativeRotationCount: Array.isArray(login.nativeDisplayRotations) ? login.nativeDisplayRotations.length : 0,
+          nativeOrientation: login.nativeOrientation,
           dialogDismissed: login.dialogDismissed,
         },
         privateShutdownWatchdogWaitMs: report.privateShutdownWatchdogWaitMs,
