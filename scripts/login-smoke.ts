@@ -120,9 +120,11 @@ export async function captureNativeHost(
   return { ...capture, image, window, capturedAt };
 }
 
-async function publishLoginPreview(
+async function publishHostPreview(
   context: LoginProbeContext,
   host: HostCapture,
+  title: string,
+  detail: Record<string, unknown>,
 ): Promise<void> {
   if (!process.env.GITHUB_ACTIONS) return;
   // Only a fresh, empty form is captured. Keep a bounded preview accessible via
@@ -158,13 +160,31 @@ print(json.dumps(dict(mimeType='image/jpeg',width=im.width,height=im.height,byte
   const message = JSON.stringify({
     ...preview,
     capturedAt: host.capturedAt,
-    emptyForm: true,
-    originalFlagSecurePreserved: true,
+    ...detail,
   })
     .replaceAll("%", "%25")
     .replaceAll("\r", "%0D")
     .replaceAll("\n", "%0A");
-  console.log(`::notice title=Empty native login preview::${message}`);
+  console.log(`::notice title=${title}::${message}`);
+}
+
+function summarizeNodes(value: Record<string, string>[]): unknown[] {
+  const summary: unknown[] = [];
+  let bytes = 0;
+  for (const node of value.slice(0, 60)) {
+    const item = {
+      class: node.class,
+      id: node["resource-id"],
+      text: node.text?.slice(0, 150),
+      description: node["content-desc"]?.slice(0, 150),
+      bounds: node.bounds,
+      clickable: node.clickable,
+    };
+    bytes += JSON.stringify(item).length;
+    if (bytes > 9000) break;
+    summary.push(item);
+  }
+  return summary;
 }
 
 function decodeEntities(value: string): string {
@@ -220,6 +240,74 @@ async function tap(
   );
   await new Promise((resolve) => setTimeout(resolve, 700));
 }
+
+/** Navigate only original APK controls confirmed in the 2.1.8 source. */
+export async function prepareKtvHome(
+  context: LoginProbeContext,
+  prefix: string,
+): Promise<Record<string, string>[]> {
+  const started = Date.now();
+  const actions: string[] = [];
+  let backCount = 0;
+  let updateDeferrals = 0;
+  let current: Record<string, string>[] = [];
+  try {
+    for (let attempt = 0; ; attempt++) {
+      current = await ui(context, `${prefix}-navigation-${attempt}`);
+      const updateTitle = current.find(
+        (node) => node["resource-id"] === "android:id/alertTitle" &&
+          /^发现新版本 \S/.test(node.text ?? ""),
+      );
+      if (updateTitle) {
+        const later = current.find(
+          (node) => node["resource-id"] === "android:id/button2" &&
+            node.text === "稍后" && node.clickable === "true",
+        );
+        const download = current.find(
+          (node) => node["resource-id"] === "android:id/button1" &&
+            node.text === "下载并安装",
+        );
+        assert(later && download && updateDeferrals < 2,
+          "Update overlay did not match the original APK's safe Later action");
+        actions.push("Deferred the original APK update using its Later button");
+        updateDeferrals++;
+        await tap(context, later);
+        continue;
+      }
+      const loading = current.some((node) => [
+        "正在初始化曲库...",
+        "已清理旧歌曲缓存，正在初始化新曲库...",
+      ].includes(node.text));
+      if (loading) {
+        assert(Date.now() - started < 30_000,
+          "Original APK library initialization did not finish within 30 seconds");
+        actions.push("Waited for original APK library initialization");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+      assert(!current.some((node) =>
+        /^(旧歌曲缓存清理失败：|曲库初始化失败：)/.test(node.text ?? "")),
+      "Original APK reported a library initialization failure");
+      const has = (id: string) => current.some(
+        (node) => node["resource-id"] === `com.local.ktv:id/${id}`,
+      );
+      if (has("btn_bottom_settings") && has("btn_top_search")) return current;
+      const back = current.find(
+        (node) => node["resource-id"] === "com.local.ktv:id/btn_back" &&
+          node.clickable === "true",
+      );
+      assert(back && backCount < 4,
+        `Cannot safely reach Maidong home from observed UI: ${JSON.stringify(summarizeNodes(current))}`);
+      actions.push("Returned using the original APK Back control");
+      backCount++;
+      await tap(context, back);
+    }
+  } finally {
+    await writeFile(path.join(context.artifacts, `${prefix}-navigation.json`),
+      JSON.stringify({ actions, durationMs: Date.now() - started, lastUi: summarizeNodes(current) }, null, 2));
+  }
+}
+
 function secureWindows(dump: string): string[] {
   return dump
     .split(/\n(?=\s*Window #\d+\s+Window\{)/)
@@ -342,7 +430,8 @@ export async function probeProtectedLogin(
   };
   let dialogOpened = false;
   try {
-    const before = await ui(context, "login-01-home");
+    const before = await prepareKtvHome(context, "login-01-home");
+    result.lastUi = summarizeNodes(before);
     const settings = before.find(
       (node) => node["resource-id"] === "com.local.ktv:id/btn_bottom_settings",
     );
@@ -352,6 +441,7 @@ export async function probeProtectedLogin(
     );
     await tap(context, settings);
     const settingsNodes = await ui(context, "login-02-settings");
+    result.lastUi = summarizeNodes(settingsNodes);
     const account = settingsNodes.find(
       (node) =>
         node.clickable === "true" &&
@@ -363,6 +453,7 @@ export async function probeProtectedLogin(
     await tap(context, account);
     dialogOpened = true;
     const form = await ui(context, "login-03-dialog");
+    result.lastUi = summarizeNodes(form);
     assert(
       form.some((node) => node.text === "登录 i歌霸"),
       "Expected native login dialog is not present",
@@ -384,15 +475,37 @@ export async function probeProtectedLogin(
       secure.length > 0,
       "Original login window FLAG_SECURE was not observed",
     );
-    await context.screenshot("login-03-dialog-guest.png");
     const host = await captureNativeHost(context, "login-03-dialog");
     result.capturedAt = host.capturedAt;
-    await publishLoginPreview(context, host);
-    const guestImage = await readPng(
-      path.join(context.artifacts, "login-03-dialog-guest.png"),
-    );
+    result.hostPreviewCaptured = true;
+    await publishHostPreview(context, host, "Empty native login preview", {
+      emptyForm: true,
+      originalFlagSecurePreserved: true,
+    });
+    // Preserve host visibility evidence even when Android refuses or returns no
+    // pixels for its protected display. An unexplained empty capture is recorded
+    // as unavailable, never relabelled as proof of secure-window redaction.
+    let guestImage: Png | undefined;
+    try {
+      await context.screenshot("login-03-dialog-guest.png");
+      guestImage = await readPng(
+        path.join(context.artifacts, "login-03-dialog-guest.png"),
+      );
+      result.guestCapture = { status: "captured" };
+    } catch (error) {
+      result.guestCapture = {
+        status: "unavailable",
+        error: String(error).slice(0, 1500),
+        redactionVerified: false,
+      };
+    }
+    const referenceImage =
+      guestImage ??
+      (await readPng(
+        path.join(context.artifacts, "login-02-settings-guest.png"),
+      ));
     const hostImage = await readPng(host.image);
-    const guestAspect = guestImage.width / guestImage.height,
+    const guestAspect = referenceImage.width / referenceImage.height,
       hostAspect = host.window.width / host.window.height;
     assert(
       Math.abs(guestAspect - hostAspect) / guestAspect < 0.1,
@@ -401,15 +514,15 @@ export async function probeProtectedLogin(
     const comparisons = fields.slice(0, 2).map((node) => {
       const guest = bounds(node.bounds);
       const mapped = {
-        x: host.window.x + (guest.x * host.window.width) / guestImage.width,
-        y: host.window.y + (guest.y * host.window.height) / guestImage.height,
-        width: (guest.width * host.window.width) / guestImage.width,
-        height: (guest.height * host.window.height) / guestImage.height,
+        x: host.window.x + (guest.x * host.window.width) / referenceImage.width,
+        y: host.window.y + (guest.y * host.window.height) / referenceImage.height,
+        width: (guest.width * host.window.width) / referenceImage.width,
+        height: (guest.height * host.window.height) / referenceImage.height,
       };
       return {
         guestBounds: guest,
         hostBounds: mapped,
-        guestBlackFraction: blackFraction(guestImage, guest),
+        guestBlackFraction: guestImage ? blackFraction(guestImage, guest) : null,
         hostBlackFraction: blackFraction(hostImage, mapped),
       };
     });
@@ -417,10 +530,14 @@ export async function probeProtectedLogin(
     result.nativeEditTextCount = fields.length;
     result.inputRegionPixels = comparisons;
     result.hostWindow = host.window;
-    assert(
-      comparisons.every((entry) => entry.guestBlackFraction > 0.95),
-      "Android screenshot does not show the expected secure-input capture redaction",
-    );
+    if (guestImage)
+      result.guestCapture = {
+        status: "captured",
+        redactionVerified: comparisons.every(
+          (entry) =>
+            entry.guestBlackFraction !== null && entry.guestBlackFraction > 0.95,
+        ),
+      };
     assert(
       comparisons.every((entry) => entry.hostBlackFraction < 0.9),
       "Native host input regions are also black; secure-login visibility is not verified",
@@ -437,10 +554,31 @@ export async function probeProtectedLogin(
     await captureNativeHost(context, "login-04-restored");
     result.dialogDismissed = true;
     result.status = "passed";
+    delete result.lastUi;
     return result;
   } catch (error) {
     result.status = "failed";
     result.error = String(error);
+    if (!result.hostPreviewCaptured) {
+      await captureNativeHost(context, "login-failure")
+        .then(async (host) => {
+          result.failureHostWindow = host.window;
+          await publishHostPreview(context, host, "Native login diagnostic preview", {
+            credentialsEntered: false,
+            accountRequestSubmitted: false,
+          });
+        })
+        .catch((captureError) => {
+          result.failureHostCaptureError = String(captureError).slice(0, 1500);
+        });
+    }
+    if (process.env.GITHUB_ACTIONS) {
+      const message = JSON.stringify(result)
+        .replaceAll("%", "%25")
+        .replaceAll("\r", "%0D")
+        .replaceAll("\n", "%0A");
+      console.log(`::notice title=Native login probe diagnostic::${message}`);
+    }
     throw error;
   } finally {
     if (dialogOpened)

@@ -20,6 +20,7 @@ import {
 } from "../electron/managed-runtime";
 import type { DeviceMode, LibraryApp, Settings } from "../src/shared/types";
 import { captureNativeHost, probeProtectedLogin } from "./login-smoke";
+import { probeHostKeyboard } from "./keyboard-smoke";
 
 // Opt-in integration test: fresh private SDK, AVD and adb server. No SDK Manager,
 // host adb, pre-created emulator, fake process or rebuilt third-party APK is used.
@@ -131,7 +132,11 @@ async function discoverDevice(): Promise<void> {
 
 async function screenshot(file: string): Promise<void> {
   if (!serial) return;
-  const png = await new Promise<Buffer>((resolve, reject) => {
+  const capture = await new Promise<{
+    error: Error | null;
+    stdout: Buffer;
+    stderr: Buffer;
+  }>((resolve) => {
     execFile(
       adb,
       ["-s", serial!, "exec-out", "screencap", "-p"],
@@ -141,16 +146,23 @@ async function screenshot(file: string): Promise<void> {
         timeout: 30_000,
         maxBuffer: 16 * 1024 ** 2,
       },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve(stdout);
-      },
+      (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     );
   });
-  assert(
-    png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
-    "screencap did not return PNG",
-  );
+  const png = capture.stdout;
+  if (
+    capture.error ||
+    !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) {
+    const detail = JSON.stringify({
+      error: capture.error?.message,
+      stdoutBytes: png.length,
+      stdout: png.toString("utf8", 0, 2000),
+      stderr: capture.stderr.toString("utf8", 0, 4000),
+    });
+    await writeFile(path.join(artifacts, `${file}.error.json`), detail);
+    throw new Error(`screencap did not return PNG: ${detail}`);
+  }
   await writeFile(path.join(artifacts, file), png);
 }
 
@@ -471,18 +483,38 @@ async function run(): Promise<void> {
         };
       },
     );
+    if (process.env.APK_KEYBOARD_PROBE === "1") {
+      try {
+        report.keyboardProbe = await step(
+          "Verify host keyboard and managed text input in public search without Enter",
+          () => probeHostKeyboard({
+            artifacts,
+            avd: deviceMode === "phone" ? settings!.phoneAvd : settings!.tvAvd,
+            shell,
+            command,
+            screenshot,
+            sendText: (text) => runtime!.sendText(deviceMode, text, settings!),
+          }),
+        );
+      } catch (error) {
+        fail(error, "Managed keyboard probe");
+      }
+    }
     if (process.env.APK_LOGIN_PROBE === "1") {
-      report.loginProbe = await step(
-        "Verify protected empty login form in native display without credentials",
-        () =>
-          probeProtectedLogin({
+      try {
+        report.loginProbe = await step(
+          "Verify protected empty login form in native display without credentials",
+          () => probeProtectedLogin({
             artifacts,
             avd: deviceMode === "phone" ? settings!.phoneAvd : settings!.tvAvd,
             shell,
             command,
             screenshot,
           }),
-      );
+        );
+      } catch (error) {
+        fail(error, "Managed login probe");
+      }
     }
     await step(
       "Inject direction keys and verify APK survives in foreground",
@@ -506,7 +538,7 @@ async function run(): Promise<void> {
         };
       },
     );
-    report.status = "passed";
+    if (report.status !== "failed") report.status = "passed";
   } catch (error) {
     fail(error);
   } finally {
@@ -626,7 +658,7 @@ async function run(): Promise<void> {
     if (process.env.GITHUB_ACTIONS) {
       // Keep concise evidence accessible through the checks API when artifact
       // blob downloads are unavailable to a reviewer. No environment secrets.
-      const diagnostic = JSON.stringify({
+      const diagnosticData = {
         status: report.status,
         steps: (
           report.steps as { name: string; status: string; durationMs: number }[]
@@ -634,6 +666,7 @@ async function run(): Promise<void> {
         runtime: report.runtime,
         deviceProperties: report.deviceProperties,
         nativeDisplay: report.nativeDisplay,
+        keyboardProbe: report.keyboardProbe,
         loginProbe: report.loginProbe,
         preparationProgress: report.preparationProgress,
         privateProcessesBeforeShutdown: report.privateProcessesBeforeShutdown,
@@ -642,8 +675,15 @@ async function run(): Promise<void> {
         privateShutdownWatchdogWaitMs: report.privateShutdownWatchdogWaitMs,
         privateProcessesAfterShutdown: report.privateProcessesAfterShutdown,
         retainedPrivateDataPath: report.retainedPrivateDataPath,
-      })
-        .slice(0, 8000)
+      };
+      const encodedDiagnostic = JSON.stringify(diagnosticData);
+      const diagnostic = (Buffer.byteLength(encodedDiagnostic, "utf8") < 48_000
+        ? encodedDiagnostic
+        : JSON.stringify({
+            status: report.status,
+            steps: diagnosticData.steps,
+            diagnosticOmitted: "Full diagnostic exceeded the annotation limit; see summary.json artifact",
+          }))
         .replaceAll("%", "%25")
         .replaceAll("\r", "%0D")
         .replaceAll("\n", "%0A");

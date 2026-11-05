@@ -1,10 +1,21 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { access, readFile, readdir, stat } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+} from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { basename, delimiter, isAbsolute, join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { displayCommand, hasVideoTexture } from "./display";
+import {
+  setEmulatorClipboard,
+  validateClipboardText,
+} from "./emulator-clipboard";
 import type {
   DeviceMode,
   LibraryApp,
@@ -26,6 +37,8 @@ interface OwnedEmulator {
   serial: string;
   avd: string;
   nativeWindow: boolean;
+  grpcPort?: number;
+  avdDirectory?: string;
 }
 
 function messageOf(error: unknown): string {
@@ -168,6 +181,8 @@ export class AndroidRuntime {
   private windows = new Map<string, ChildProcess>();
   private disposed = false;
   private disposal?: Promise<void>;
+  private clipboardRequests = new Set<AbortController>();
+  private textSending = false;
 
   private readonly environment: NodeJS.ProcessEnv;
   private readonly privateAvdHome: boolean;
@@ -437,18 +452,7 @@ export class AndroidRuntime {
 
   // Read AVD metadata when available so a phone image is not silently used as a TV.
   private async checkDeviceMode(avd: string, mode: DeviceMode): Promise<void> {
-    const avdHome =
-      this.environment.ANDROID_AVD_HOME ||
-      join(
-        this.environment.ANDROID_USER_HOME || join(homedir(), ".android"),
-        "avd",
-      );
-    let avdDirectory = join(avdHome, `${avd}.avd`);
-    const ini = await readFile(join(avdHome, `${avd}.ini`), "utf8").catch(
-      () => "",
-    );
-    const customPath = ini.match(/^path=(.+)$/m)?.[1]?.trim();
-    if (customPath) avdDirectory = customPath;
+    const avdDirectory = await this.avdDirectory(avd);
     const config = await readFile(
       join(avdDirectory, "config.ini"),
       "utf8",
@@ -474,6 +478,38 @@ export class AndroidRuntime {
           ? "内置手机镜像配置不匹配，请重新准备手机模式。"
           : `AVD「${avd}」是电视设备，请在运行环境中选择手机虚拟设备。`,
       );
+  }
+
+  private async avdDirectory(avd: string): Promise<string> {
+    const avdHome =
+      this.environment.ANDROID_AVD_HOME ||
+      join(
+        this.environment.ANDROID_USER_HOME || join(homedir(), ".android"),
+        "avd",
+      );
+    let avdDirectory = join(avdHome, `${avd}.avd`);
+    const ini = await readFile(join(avdHome, `${avd}.ini`), "utf8").catch(
+      () => "",
+    );
+    const customPath = ini.match(/^path=(.+)$/m)?.[1]?.trim();
+    if (customPath) avdDirectory = customPath;
+    return resolve(avdDirectory);
+  }
+
+  private async freeGrpcPort(): Promise<number> {
+    return new Promise((resolvePort, reject) => {
+      const server = createServer();
+      server.once("error", () =>
+        reject(new Error("无法分配本地文本输入端口，请稍后重试。")),
+      );
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        server.close(() => {
+          if (address && typeof address !== "string") resolvePort(address.port);
+          else reject(new Error("无法分配本地文本输入端口，请稍后重试。"));
+        });
+      });
+    });
   }
 
   private async freePort(devices: Device[]): Promise<number> {
@@ -559,6 +595,12 @@ export class AndroidRuntime {
             : "未找到 Android Emulator，请在 SDK Manager 安装。",
         );
       const port = await this.freePort(devices);
+      const grpcPort = requireNativeWindow
+        ? await this.freeGrpcPort()
+        : undefined;
+      const avdDirectory = requireNativeWindow
+        ? await this.avdDirectory(avd)
+        : undefined;
       serial = `emulator-${port}`;
       progress(
         `正在启动${mode === "phone" ? "手机" : "电视"}虚拟设备「${avd}」，首次启动可能需要几分钟…`,
@@ -573,7 +615,9 @@ export class AndroidRuntime {
           avd,
           "-port",
           String(port),
-          ...(requireNativeWindow ? [] : ["-no-window"]),
+          ...(requireNativeWindow
+            ? ["-grpc", String(grpcPort), "-grpc-use-token"]
+            : ["-no-window"]),
           "-no-boot-anim",
         ],
         {
@@ -588,6 +632,8 @@ export class AndroidRuntime {
         serial,
         avd,
         nativeWindow: requireNativeWindow,
+        grpcPort,
+        avdDirectory,
       });
       child.stderr?.on("data", (data) => {
         processError = (processError + String(data)).slice(-3000);
@@ -892,6 +938,151 @@ export class AndroidRuntime {
     onProgress(`${app.name} 已在独立窗口打开。`);
   }
 
+  private async clipboardCredentials(
+    owned: OwnedEmulator,
+  ): Promise<{ port: number; token: string }> {
+    const invalid = () =>
+      new Error("无法验证模拟器文本输入连接，请关闭并重新打开该模拟器后重试。");
+    try {
+      const discovery = await this.run(
+        owned.adb,
+        ["-s", owned.serial, "emu", "avd", "discoverypath"],
+        5000,
+      );
+      const lines = discovery.split(/\r?\n/).filter((line) => line.length > 0);
+      if (lines.length !== 2 || lines[1] !== "OK" || !isAbsolute(lines[0]))
+        throw invalid();
+      const pid = basename(lines[0]).match(/^pid_(\d+)\.ini$/)?.[1];
+      // POSIX exec retains the PID; Windows emulator.exe spawns a QEMU child.
+      // Windows ownership is pinned by the live launcher, exact serial, private
+      // gRPC port and canonical AVD content directory instead of launcher PID.
+      if (
+        !pid ||
+        (process.platform !== "win32" && Number(pid) !== owned.child.pid)
+      )
+        throw invalid();
+      const info = await lstat(lines[0]);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024)
+        throw invalid();
+      const contents = await readFile(lines[0], "utf8");
+      if (Buffer.byteLength(contents, "utf8") > 64 * 1024) throw invalid();
+      const values = new Map<string, string>();
+      for (const line of contents.split(/\r?\n/)) {
+        const match = line.match(/^([^#;=]+)=(.*)$/);
+        if (!match) continue;
+        const key = match[1].trim();
+        if (values.has(key)) throw invalid();
+        values.set(key, match[2].trim());
+      }
+      if (
+        !owned.grpcPort ||
+        !owned.avdDirectory ||
+        values.get("grpc.port") !== String(owned.grpcPort) ||
+        values.get("port.serial") !== owned.serial.replace("emulator-", "") ||
+        values.get("avd.id") !== owned.avd ||
+        !values.get("grpc.token") ||
+        !values.get("avd.dir") ||
+        !isAbsolute(values.get("avd.dir")!)
+      )
+        throw invalid();
+      const expected = await realpath(owned.avdDirectory);
+      const actual = await realpath(values.get("avd.dir")!);
+      if (
+        process.platform === "win32"
+          ? expected.toLowerCase() !== actual.toLowerCase()
+          : expected !== actual
+      )
+        throw invalid();
+      return { port: owned.grpcPort, token: values.get("grpc.token")! };
+    } catch {
+      // Neither discovery contents nor transport credentials belong in UI/logs.
+      throw invalid();
+    }
+  }
+
+  async sendText(
+    mode: DeviceMode,
+    text: string,
+    settings: Settings,
+  ): Promise<void> {
+    this.assertActive();
+    if (mode !== "phone" && mode !== "tv") throw new Error("无效的设备模式。");
+    validateClipboardText(text);
+    if (this.textSending) throw new Error("上一段文本仍在发送，请稍后重试。");
+    const avd = configuredAvd(settings, mode, this.privateAvdHome);
+    const owned = this.ownedEmulators.get(avd);
+    if (
+      !this.nativeDisplay ||
+      !owned?.nativeWindow ||
+      !owned.grpcPort ||
+      childHasExited(owned.child)
+    ) {
+      throw new Error(
+        `请先打开本应用的${mode === "phone" ? "手机" : "电视"}模拟器窗口，再发送文本。`,
+      );
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    this.clipboardRequests.add(controller);
+    this.textSending = true;
+    owned.child.once("exit", abort);
+    owned.child.once("error", abort);
+    const assertTarget = () => {
+      this.assertActive();
+      if (
+        controller.signal.aborted ||
+        this.ownedEmulators.get(avd) !== owned ||
+        childHasExited(owned.child)
+      ) {
+        throw new Error("模拟器窗口已关闭，文本发送已取消。");
+      }
+    };
+    const verifyOnline = async () => {
+      assertTarget();
+      const devices = await this.devices(owned.adb);
+      assertTarget();
+      if (
+        !devices.some(
+          (device) =>
+            device.serial === owned.serial &&
+            device.avd === avd &&
+            device.state === "device",
+        )
+      ) {
+        throw new Error("目标模拟器未连接，文本未发送，请重新打开窗口后重试。");
+      }
+    };
+    try {
+      await verifyOnline();
+      const credentials = await this.clipboardCredentials(owned);
+      assertTarget();
+      await setEmulatorClipboard(
+        credentials.port,
+        credentials.token,
+        text,
+        controller.signal,
+      );
+      assertTarget();
+      // Readback confirms only the host clipboard cache, not delivery to Android.
+      // Revalidate ownership/online state and paste once; never retry a paste or
+      // send Enter. The UI reports 'sent', and integration tests verify guest input.
+      await verifyOnline();
+      assertTarget();
+      await this.run(
+        owned.adb,
+        ["-s", owned.serial, "shell", "input", "keyevent", "KEYCODE_PASTE"],
+        5000,
+      ).catch(() => {
+        throw new Error("文本发送失败，请确认模拟器输入框已聚焦后重试。");
+      });
+    } finally {
+      owned.child.removeListener("exit", abort);
+      owned.child.removeListener("error", abort);
+      this.clipboardRequests.delete(controller);
+      this.textSending = false;
+    }
+  }
+
   async uninstall(
     app: LibraryApp,
     mode: DeviceMode,
@@ -991,6 +1182,8 @@ export class AndroidRuntime {
   dispose(): Promise<void> {
     if (this.disposal) return this.disposal;
     this.disposed = true;
+    for (const request of this.clipboardRequests) request.abort();
+    this.clipboardRequests.clear();
     for (const child of this.windows.values()) child.kill();
     this.windows.clear();
     const owned = [...this.ownedEmulators.values()];

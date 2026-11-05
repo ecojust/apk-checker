@@ -214,6 +214,21 @@ function registerIpc() {
     }),
   );
 
+  handle("apk:send-text", (mode: unknown, text: unknown) =>
+    action(async () => {
+      const deviceMode = validMode(mode);
+      if (
+        typeof text !== "string" ||
+        !text.length ||
+        text.includes("\0") ||
+        Buffer.byteLength(text, "utf8") > 16 * 1024
+      ) {
+        throw new Error("请输入有效文字，单次最多发送 16 KB。");
+      }
+      await runtime.sendText(deviceMode, text, library.getSettings());
+    }),
+  );
+
   handle("apk:remove", (id: unknown) =>
     action(async () => {
       const appId = validId(id);

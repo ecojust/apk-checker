@@ -6,6 +6,7 @@ const api: ApkCheckerApi = {
   importApks: () => ipcRenderer.invoke("apk:import"),
   installApp: (id, mode) => ipcRenderer.invoke("apk:install", id, mode),
   launchApp: (id, mode) => ipcRenderer.invoke("apk:launch", id, mode),
+  sendText: (mode, text) => ipcRenderer.invoke("apk:send-text", mode, text),
   uninstallApp: (id, mode) => ipcRenderer.invoke("apk:uninstall", id, mode),
   removeApp: (id) => ipcRenderer.invoke("apk:remove", id),
   saveSettings: (settings) => ipcRenderer.invoke("apk:settings", settings),

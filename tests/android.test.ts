@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import {
@@ -12,6 +12,12 @@ import {
 } from "../electron/android";
 import { displayCommand } from "../electron/display";
 import type { LibraryApp, Settings } from "../src/shared/types";
+
+const clipboardMock = vi.hoisted(() => vi.fn());
+vi.mock("../electron/emulator-clipboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../electron/emulator-clipboard")>()),
+  setEmulatorClipboard: clipboardMock,
+}));
 
 const processMocks = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
 vi.mock("node:child_process", () => processMocks);
@@ -111,6 +117,7 @@ describe("AndroidRuntime", () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    clipboardMock.mockResolvedValue(undefined);
     autoExitAfterEmulatorKill = true;
     directory = await mkdtemp(join(tmpdir(), "apk checker runtime "));
     settings = {
@@ -1069,6 +1076,9 @@ describe("AndroidRuntime", () => {
       avd: string;
       serial: string;
       native: boolean;
+      grpcPort: number;
+      avdDirectory: string;
+      discoveryPath: string;
     }[] = [];
     const live = new Map<string, (typeof children)[number]>();
     const events: string[] = [];
@@ -1078,6 +1088,8 @@ describe("AndroidRuntime", () => {
         return [...live.keys()].map((serial) => `${serial}\tdevice`).join("\n");
       if (args.includes("emu")) {
         const target = live.get(args[1]);
+        if (args.includes("discoverypath"))
+          return `${target?.discoveryPath || "NO_AVD_INFO"}\nOK\n`;
         if (args.includes("windowtype"))
           return `windowtype=${target?.native ? "qtwindow" : "headless"}\nOK\n`;
         if (args.includes("name"))
@@ -1092,6 +1104,17 @@ describe("AndroidRuntime", () => {
         avd: args[args.indexOf("-avd") + 1],
         serial: `emulator-${args[args.indexOf("-port") + 1]}`,
         native: !args.includes("-no-window"),
+        grpcPort: Number(args[args.indexOf("-grpc") + 1]),
+        avdDirectory: join(
+          environment.ANDROID_AVD_HOME,
+          `${args[args.indexOf("-avd") + 1]}.avd`,
+        ),
+        discoveryPath: join(
+          directory,
+          "discovery",
+          args[args.indexOf("-avd") + 1],
+          "pid_12345.ini",
+        ),
       };
       children.push(target);
       live.set(target.serial, target);
@@ -1387,5 +1410,269 @@ describe("AndroidRuntime", () => {
     expect(progress).toHaveBeenCalledWith(expect.stringContaining("正在启动"));
     expect(fixture.children).toHaveLength(0);
     expect(processMocks.spawn).not.toHaveBeenCalled();
+  });
+  async function writeClipboardAdvertisement(
+    target: ReturnType<typeof nativeRuntimeFixture>["children"][number],
+    changes: Record<string, string> = {},
+  ) {
+    await mkdir(target.avdDirectory, { recursive: true });
+    await mkdir(dirname(target.discoveryPath), { recursive: true });
+    const values = {
+      "avd.id": target.avd,
+      "avd.dir": target.avdDirectory,
+      "port.serial": target.serial.replace("emulator-", ""),
+      "grpc.port": String(target.grpcPort),
+      "grpc.token": Buffer.from(`secret for ${target.avd}`).toString("base64"),
+      ...changes,
+    };
+    await writeFile(
+      target.discoveryPath,
+      Object.entries(values)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n"),
+    );
+    return values;
+  }
+
+  it("enables authenticated per-device gRPC only on native emulator startup", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+    expect(processMocks.spawn.mock.calls[0][1]).not.toContain("-grpc");
+    await runtime.launch(app, "phone", settings, vi.fn());
+    const nativeArgs = processMocks.spawn.mock.calls[1][1] as string[];
+    expect(nativeArgs).toContain("-grpc-use-token");
+    expect(Number(nativeArgs[nativeArgs.indexOf("-grpc") + 1])).toBeGreaterThan(
+      1023,
+    );
+    expect(fixture.children[1].grpcPort).toBe(
+      Number(nativeArgs[nativeArgs.indexOf("-grpc") + 1]),
+    );
+  });
+
+  it("sends exact Unicode through verified gRPC then pastes once without Enter", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    const target = fixture.children[0];
+    const advertisement = await writeClipboardAdvertisement(target);
+    const text = "你好 😀 'quoted' \"双引号\"\nnext line";
+    clipboardMock.mockImplementation(async (_port, _token, value) => {
+      expect(value).toBe(text);
+      expect(
+        processMocks.execFile.mock.calls.some((call) =>
+          call[1].includes("KEYCODE_PASTE"),
+        ),
+      ).toBe(false);
+    });
+    await runtime.sendText("phone", text, settings);
+    expect(clipboardMock).toHaveBeenCalledExactlyOnceWith(
+      target.grpcPort,
+      advertisement["grpc.token"],
+      text,
+      expect.any(AbortSignal),
+    );
+    expect(
+      processMocks.execFile.mock.calls.filter((call) =>
+        call[1].includes("KEYCODE_PASTE"),
+      ),
+    ).toEqual([
+      [
+        expect.any(String),
+        ["-s", target.serial, "shell", "input", "keyevent", "KEYCODE_PASTE"],
+        expect.any(Object),
+        expect.any(Function),
+      ],
+    ]);
+    expect(
+      processMocks.execFile.mock.calls.some(
+        (call) =>
+          call[1].includes(text) ||
+          call[1].includes("KEYCODE_ENTER") ||
+          call[1].includes("text"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps phone and TV text requests bound to their own port, token and serial", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await runtime.launch(app, "tv", settings, vi.fn());
+    await Promise.all(
+      fixture.children.map((target) => writeClipboardAdvertisement(target)),
+    );
+    await runtime.sendText("tv", "电视输入", settings);
+    await runtime.sendText("phone", "手机输入", settings);
+    expect(clipboardMock.mock.calls.map((call) => call[0])).toEqual([
+      fixture.children[1].grpcPort,
+      fixture.children[0].grpcPort,
+    ]);
+    const pasted = processMocks.execFile.mock.calls.filter((call) =>
+      call[1].includes("KEYCODE_PASTE"),
+    );
+    expect(pasted.map((call) => call[1][1])).toEqual([
+      fixture.children[1].serial,
+      fixture.children[0].serial,
+    ]);
+  });
+
+  it.each([
+    ["grpc.port", "1"],
+    ["port.serial", "5550"],
+    ["avd.id", "Another_AVD"],
+    ["grpc.token", ""],
+    ["avd.dir", "/missing/other.avd"],
+  ])(
+    "rejects an advertisement with mismatched %s before sending text",
+    async (key, value) => {
+      const fixture = nativeRuntimeFixture();
+      await runtime.launch(app, "phone", settings, vi.fn());
+      await writeClipboardAdvertisement(fixture.children[0], { [key]: value });
+      await expect(
+        runtime.sendText("phone", "秘密文本", settings),
+      ).rejects.toThrow("无法验证模拟器");
+      expect(clipboardMock).not.toHaveBeenCalled();
+      expect(
+        processMocks.execFile.mock.calls.some((call) =>
+          call[1].includes("KEYCODE_PASTE"),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("rejects a stale POSIX discovery PID even if all advertised fields match", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    fixture.children[0].discoveryPath = join(
+      dirname(fixture.children[0].discoveryPath),
+      "pid_99999.ini",
+    );
+    await writeClipboardAdvertisement(fixture.children[0]);
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    await expect(runtime.sendText("phone", "你好", settings)).rejects.toThrow(
+      "无法验证模拟器",
+    );
+    expect(clipboardMock).not.toHaveBeenCalled();
+  });
+
+  it("allows the Windows QEMU child PID to differ from its live launcher while pinning all other fields", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    fixture.children[0].discoveryPath = join(
+      dirname(fixture.children[0].discoveryPath),
+      "pid_99999.ini",
+    );
+    await writeClipboardAdvertisement(fixture.children[0]);
+    Object.defineProperty(process, "platform", { value: "win32" });
+    await runtime.sendText("phone", "你好", settings);
+    expect(clipboardMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not open a device or use an external/native-unowned session to send text", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      APK_CHECKER_DISPLAY_MODE: "native",
+    });
+    await expect(runtime.sendText("phone", "你好", settings)).rejects.toThrow(
+      "请先打开",
+    );
+    expect(processMocks.execFile).not.toHaveBeenCalled();
+    expect(processMocks.spawn).not.toHaveBeenCalled();
+    expect(clipboardMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send text to its owned headless installation session", async () => {
+    nativeRuntimeFixture();
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+    await expect(runtime.sendText("phone", "你好", settings)).rejects.toThrow(
+      "请先打开",
+    );
+    expect(clipboardMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "a\0b", "😀".repeat(4097), "\ud800"])(
+    "rejects invalid clipboard text before any device command",
+    async (text) => {
+      await expect(runtime.sendText("phone", text, settings)).rejects.toThrow();
+      expect(processMocks.execFile).not.toHaveBeenCalled();
+      expect(clipboardMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("never pastes after the RPC fails and never retries set or paste", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await writeClipboardAdvertisement(fixture.children[0]);
+    clipboardMock.mockRejectedValue(new Error("模拟器文本连接失败。"));
+    await expect(runtime.sendText("phone", "你好", settings)).rejects.toThrow(
+      "模拟器文本连接失败",
+    );
+    expect(clipboardMock).toHaveBeenCalledOnce();
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("KEYCODE_PASTE"),
+      ),
+    ).toBe(false);
+  });
+
+  it("cancels an in-flight clipboard request on quit and never sends paste afterwards", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await writeClipboardAdvertisement(fixture.children[0]);
+    let finishRpc!: () => void;
+    clipboardMock.mockImplementation(
+      () =>
+        new Promise<void>((resolveRpc) => {
+          finishRpc = resolveRpc;
+        }),
+    );
+    const sending = runtime.sendText("phone", "你好", settings);
+    const cancelled = expect(sending).rejects.toThrow("正在退出");
+    await vi.waitFor(() => expect(clipboardMock).toHaveBeenCalledOnce());
+    const signal = clipboardMock.mock.calls[0][3] as AbortSignal;
+    await runtime.dispose();
+    expect(signal.aborted).toBe(true);
+    finishRpc();
+    await cancelled;
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("KEYCODE_PASTE"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not paste if the owned window closes while setting the clipboard", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await writeClipboardAdvertisement(fixture.children[0]);
+    clipboardMock.mockImplementation(async () =>
+      fixture.children[0].child.emit("exit", 0, null),
+    );
+    await expect(runtime.sendText("phone", "你好", settings)).rejects.toThrow(
+      "窗口已关闭",
+    );
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("KEYCODE_PASTE"),
+      ),
+    ).toBe(false);
+  });
+
+  it("revalidates exact AVD identity after clipboard readback before paste", async () => {
+    const fixture = nativeRuntimeFixture();
+    await runtime.launch(app, "phone", settings, vi.fn());
+    await writeClipboardAdvertisement(fixture.children[0]);
+    const normal = output;
+    clipboardMock.mockImplementation(async () => {
+      output = (args) =>
+        args.includes("emu") && args.includes("name")
+          ? "Foreign_AVD\nOK\n"
+          : normal(args);
+    });
+    await expect(runtime.sendText("phone", "你好", settings)).rejects.toThrow(
+      "目标模拟器未连接",
+    );
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("KEYCODE_PASTE"),
+      ),
+    ).toBe(false);
   });
 });

@@ -15,7 +15,7 @@
 - `electron/main.ts`、`electron/preload.ts`：桌面窗口、受限 IPC、原生文件选择和操作调度。
 - `electron/apk-metadata.ts`、`electron/library.ts`：内置 APK 解析、私有缓存、原子持久化和安装记录；正常导入不调用 aapt 或外部 SDK。
 - `electron/managed-runtime.ts`、`resources/`：固定资源目录、许可证、下载校验、自动准备及私有 AVD。
-- `electron/android.ts`：指定模拟器的内部通信、scrcpy 窗口与自有进程清理。
+- `electron/android.ts`：指定模拟器的内部通信、原生窗口、文字传输与自有进程清理；旧 scrcpy 路径仅保留作兼容诊断。
 - `src/`：React 桌面、软件库和运行环境界面；`src/shared/types.ts` 是前后端共享契约。
 - `tests/`：自动化回归；`scripts/`：实际 APK 检查及构建辅助工具；`.github/workflows/`：CI 和安装包构建。
 - `docs/`：使用说明和可复查测试报告；`history/`：用户请求、行动记录与交接索引。

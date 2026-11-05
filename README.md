@@ -2,9 +2,9 @@
 
 用于管理和运行 Android APK 的桌面应用，面向 **macOS Apple Silicon、macOS Intel 和 Windows x64**。导入后在软件库选择手机或电视模式安装；安装成功的应用显示在对应桌面，点击即可打开独立显示窗口。
 
-**0.2.2 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
+**0.2.3 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
 
-界面使用 Electron + React，Android 运行由 Emulator 提供。0.2.2 默认使用模拟器原生窗口，支持麦动这类禁止投屏的安全登录弹窗；修复证据见[安全登录说明](docs/testing/secure-login.md)。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
+界面使用 Electron + React，Android 运行由 Emulator 提供。从 0.2.2 起默认使用模拟器原生窗口，用于显示麦动这类禁止投屏的安全登录弹窗；修复证据见[安全登录说明](docs/testing/secure-login.md)。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
 
 上一版已验证安装包（0.2.1）：[Apple Silicon Mac](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429630602) · [Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429311377) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42054628743/artifacts/13429855318)。CI 产物保留 14 天，包含安装包和 SHA-256 校验文件；可按文末命令重新构建。
 
@@ -65,6 +65,17 @@ xattr -dr com.apple.quarantine "/Applications/APK Checker.app"
 上述操作不需要 `sudo`，不关闭全局 Gatekeeper。若校验和或签名核验失败，应重新下载并替换该应用，而不是扩大解除隔离的范围。构建产物中的 `mac-verification.json` 记录签名、DMG 完整性、实际启动及 Gatekeeper 评估结果。已完成的原生验收及手机／电视完整流程见[0.2.1 运行环境报告](docs/testing/managed-runtime.md)；旧版记录见[打包修复报告](docs/testing/macos-0.1.1.md)。
 
 后台安装后的第一次打开会保存并重启同一个模拟器，以显示原生窗口，APK 和数据会保留。后续会复用该模式的原生窗口；如果已最小化，可从 Dock／任务栏恢复。关闭原生窗口会退出对应模拟器，再次打开应用会自动启动。
+
+### 用电脑输入文字
+
+如果电脑输入法的候选文字没有进入 Android 输入框，可在 0.2.3 中：
+
+1. 先在模拟器里点中要填写的输入框。
+2. 回到 APK Checker 的对应手机／电视桌面，点击“输入文字”。
+3. 用电脑键盘和输入法写好内容，点击“发送文字”。确认文字已进入模拟器后，再操作软件的搜索或登录按钮。
+
+选字时 Enter 只确认候选；再次 Enter 发送，Shift+Enter 换行。文字只暂存在当前弹窗内存，关闭后清空；单次最多 16 KB。发送不会附加 Android Enter 或自动提交表单。原生窗口直接接收宿主中文输入法仍受 Emulator 限制，该入口提供独立的完整文字通道；验证范围见[键盘与文字输入记录](docs/testing/keyboard-input.md)。
+
 
 ## 软件库与本地数据
 

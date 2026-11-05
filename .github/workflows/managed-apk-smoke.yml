@@ -12,11 +12,16 @@ on:
         description: Check the empty protected login dialog in the native display (no credentials)
         type: boolean
         default: true
+      keyboard_probe:
+        description: Check host keys and managed text input in public search (no accounts or Enter)
+        type: boolean
+        default: true
   push:
     branches: [feat/desktop-android-emulator]
     paths:
       - scripts/managed-apk-smoke.ts
       - scripts/login-smoke.ts
+      - scripts/keyboard-smoke.ts
       - .github/workflows/managed-apk-smoke.yml
 
 permissions:
@@ -34,6 +39,7 @@ jobs:
     env:
       APK_TEST_MODE: ${{ matrix.mode }}
       APK_LOGIN_PROBE: ${{ github.event_name == 'push' && '1' || inputs.login_probe && '1' || '0' }}
+      APK_KEYBOARD_PROBE: ${{ github.event_name == 'push' && '1' || inputs.keyboard_probe && '1' || '0' }}
       # CI has no sound card. This preserves video while making no audio claim.
       SDL_AUDIODRIVER: dummy
     steps:

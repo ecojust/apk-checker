@@ -12,6 +12,7 @@ import {
   ExternalLink,
   HardDrive,
   Import,
+  Keyboard,
   LayoutGrid,
   LoaderCircle,
   Monitor,
@@ -105,6 +106,161 @@ function AppIcon({ app, large = false }: { app: LibraryApp; large?: boolean }) {
   );
 }
 
+function TextInputDialog({
+  mode,
+  onClose,
+  onSend,
+}: {
+  mode: DeviceMode;
+  onClose: () => void;
+  onSend: (mode: DeviceMode, text: string) => Promise<ActionResult>;
+}) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const input = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
+  const compositionEnded = useRef(-Infinity);
+  const submitting = useRef(false);
+  const tooLong = new TextEncoder().encode(text).length > 16 * 1024;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    input.current?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+    };
+  }, []);
+
+  async function send() {
+    if (submitting.current || composing.current || !text.length || tooLong)
+      return;
+    submitting.current = true;
+    setSending(true);
+    setError("");
+    try {
+      const result = await onSend(mode, text);
+      if (result.ok) {
+        onClose();
+      } else {
+        setError(result.error || "文字未发送，请检查模拟器后重试。");
+      }
+    } catch {
+      // Do not echo transport exceptions that could contain the supplied text.
+      setError("文字未发送，请检查模拟器后重试。");
+    } finally {
+      submitting.current = false;
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !submitting.current)
+          onClose();
+      }}
+    >
+      <form
+        className="confirm-dialog text-input-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="text-input-title"
+        aria-describedby="text-input-description"
+        aria-busy={sending}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.key === "Escape" &&
+            !composing.current &&
+            !event.nativeEvent.isComposing &&
+            !submitting.current
+          ) {
+            event.preventDefault();
+            onClose();
+          }
+          if (event.key !== "Tab") return;
+          const controls = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              "textarea, button:not(:disabled)",
+            ),
+          );
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+      >
+        <span className="prepare-icon"><Keyboard size={27} /></span>
+        <h2 id="text-input-title">向{modeNames[mode]}模拟器输入文字</h2>
+        <p id="text-input-description">
+          先在模拟器中点中需要填写的输入框，再回到这里用电脑输入法输入文字并发送。
+        </p>
+        <label className="text-input-label" htmlFor="emulator-text">要发送的文字</label>
+        <textarea
+          id="emulator-text"
+          ref={input}
+          value={text}
+          readOnly={sending}
+          maxLength={16 * 1024}
+          rows={4}
+          autoComplete="off"
+          spellCheck={false}
+          aria-describedby="text-input-hint"
+          aria-invalid={tooLong || undefined}
+          onChange={(event) => {
+            setText(event.target.value);
+            setError("");
+          }}
+          onCompositionStart={() => { composing.current = true; }}
+          onCompositionEnd={() => {
+            composing.current = false;
+            compositionEnded.current = performance.now();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.shiftKey) return;
+            if (
+              composing.current ||
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229
+            ) return;
+            event.preventDefault();
+            if (performance.now() - compositionEnded.current < 100) return;
+            if (!event.repeat) void send();
+          }}
+        />
+        <p id="text-input-hint" className="text-input-hint">
+          Enter 发送 · Shift + Enter 换行。选字时按 Enter 只确认候选。
+          发送后请在模拟器中确认文字，再操作搜索或登录按钮。
+        </p>
+        {(tooLong || error) && (
+          <p className="text-input-error" role="alert">
+            {tooLong ? "文字过长，单次最多发送 16 KB。" : error}
+          </p>
+        )}
+        <div className="confirm-actions">
+          <button type="button" className="button secondary" disabled={sending} onClick={onClose}>
+            取消
+          </button>
+          <button type="submit" className="button primary" disabled={sending || !text.length || tooLong}>
+            {sending ? <LoaderCircle className="spin" size={16} /> : <ArrowRight size={16} />}
+            {sending ? "正在发送…" : "发送文字"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function App() {
   const api = window.apkChecker;
   const [state, setState] = useState<AppState>(initialState);
@@ -119,6 +275,7 @@ function App() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [draft, setDraft] = useState<Settings>(initialState.settings);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [textInputMode, setTextInputMode] = useState<DeviceMode | null>(null);
   const [preparationRequest, setPreparationRequest] =
     useState<ManagedRequest | null>(null);
   const [licenseText, setLicenseText] = useState("");
@@ -384,6 +541,25 @@ function App() {
       setBusy(null);
       setProgress(null);
       activeOperation.current = false;
+    }
+  }
+
+  async function sendText(deviceMode: DeviceMode, text: string): Promise<ActionResult> {
+    if (!api) return { ok: false, error: "请在 APK Checker 桌面应用中输入文字。" };
+    if (activeOperation.current)
+      return { ok: false, error: "正在处理另一个操作，请稍后重试。" };
+    activeOperation.current = true;
+    setBusy("send-text");
+    setNotice(null);
+    try {
+      const result = await api.sendText(deviceMode, text);
+      if (result.ok) {
+        setNotice({ type: "success", title: "文字已发送，请在模拟器中确认" });
+      }
+      return result;
+    } finally {
+      activeOperation.current = false;
+      setBusy(null);
     }
   }
 
@@ -750,6 +926,28 @@ function App() {
                   )}
                 </div>
                 <div className="list-tools">
+                  {page === "desktop" && (
+                    <button
+                      className="button secondary small"
+                      disabled={disabled}
+                      onClick={() => {
+                        if (!api) { explainPreview(); return; }
+                        if (!activeDevice) {
+                          setNotice({
+                            type: "info",
+                            title: `请先打开一个${modeNames[mode]}应用`,
+                            details: ["模拟器窗口打开后，点中需要填写的输入框，再使用“输入文字”。"],
+                          });
+                          return;
+                        }
+                        setNotice(null);
+                        setTextInputMode(mode);
+                      }}
+                    >
+                      <Keyboard size={15} />
+                      输入文字
+                    </button>
+                  )}
                   {page === "library" && (
                     <div className="select-wrap filter-select">
                       <select
@@ -1439,6 +1637,13 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+      {textInputMode && (
+        <TextInputDialog
+          mode={textInputMode}
+          onClose={() => setTextInputMode(null)}
+          onSend={sendText}
+        />
       )}
       {confirmation && (
         <div

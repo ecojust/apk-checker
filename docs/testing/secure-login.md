@@ -24,3 +24,10 @@
 - 按 Back 关闭表单并确认正常页面恢复，再卸载测试 APK 和清理全部私有进程。
 
 目前源码／原版 DEX 已确认根因；原生显示回归、实际安全弹窗截图和 0.2.2 安装包验收结果将在本记录追加。此前 0.2.1 完整链路见[运行环境报告](managed-runtime.md)，不能替代本次安全弹窗验证。
+
+## 已执行的 0.2.2 验证及保留失败
+
+- `223d85a` 的[三平台安装包构建 42061147332](https://github.com/ecojust/apk-checker/actions/runs/42061147332) 全部通过，Mac 两种架构的 DMG、签名、应用启动和工具检查通过；全量 164 项本地测试通过。
+- [首次原生 APK run 42061147067](https://github.com/ecojust/apk-checker/actions/runs/42061147067)：手机原生 QEMU 因 Linux CI 缺 `libpulse.so.0` 退出 127；TV 在原有 180 秒安装时限失败。均未进入安全表单验证。
+- 补齐 CI `libpulse0` 后，`2ee9c03` 的[run 42065213408](https://github.com/ecojust/apk-checker/actions/runs/42065213408) 手机和电视都通过安装、原生窗口启动、宿主截图、前台检查、卸载及全部私有进程退出；TV 本轮安装约 60 秒，没有扩大时限。
+- 本轮整体仍失败：手机已确认原生登录 EditText 和 `FLAG_SECURE`，随后 guest `screencap` 未返回 PNG，原检查尚未发布宿主表单预览；TV 首页 UI 树中未找到指定设置控件。正在保留具体截图诊断、先采集独立宿主表单并增加有界 UI 诊断，不能把这轮写成安全表单全通过。

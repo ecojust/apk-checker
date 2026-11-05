@@ -72,6 +72,7 @@ export interface ApkCheckerApi {
   importApks(): Promise<ImportResult>;
   installApp(id: string, mode: DeviceMode): Promise<ActionResult>;
   launchApp(id: string, mode: DeviceMode): Promise<ActionResult>;
+  sendText(mode: DeviceMode, text: string): Promise<ActionResult>;
   uninstallApp(id: string, mode: DeviceMode): Promise<ActionResult>;
   removeApp(id: string): Promise<ActionResult>;
   saveSettings(settings: Settings): Promise<ActionResult>;
