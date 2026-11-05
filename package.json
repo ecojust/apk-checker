@@ -13,7 +13,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "dist": "npm run build && electron-builder",
     "check": "tsc --noEmit",
-    "dev:web": "cross-env WEB_PREVIEW=1 vite --host 0.0.0.0"
+    "dev:web": "cross-env WEB_PREVIEW=1 vite --host 0.0.0.0",
+    "test:apk": "tsx scripts/apk-smoke.ts"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -28,6 +29,7 @@
     "cross-env": "^7.0.3",
     "electron": "^45.2.3",
     "electron-builder": "^26.0.0",
+    "tsx": "^4.23.15",
     "typescript": "~5.7.2",
     "vite": "^7.3.7",
     "vite-plugin-electron": "^0.29.0",

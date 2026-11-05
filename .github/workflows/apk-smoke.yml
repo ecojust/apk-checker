@@ -1,0 +1,89 @@
+name: Test Maidong KTV release APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/desktop-android-emulator]
+    paths:
+      - scripts/apk-smoke.ts
+      - .github/workflows/apk-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  android-smoke:
+    name: Maidong 2.1.8 / ${{ matrix.mode }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: phone
+            api: 30
+            target: google_apis
+            arch: x86_64
+            profile: pixel_2
+          - mode: tv
+            api: 31
+            target: android-tv
+            arch: x86
+            profile: tv_1080p
+    env:
+      EXPECTED_APK_SHA256: 86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b
+      APK_PATH: ${{ runner.temp }}/Maidong-KTV-2.1.8.apk
+      APK_TEST_MODE: ${{ matrix.mode }}
+      APK_TEST_AVD: apk_${{ matrix.mode }}
+      APK_TEST_SYSTEM_IMAGE: system-images;android-${{ matrix.api }};${{ matrix.target }};${{ matrix.arch }}
+      SCRCPY_PATH: /usr/bin/scrcpy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Install display and SDK tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y scrcpy xvfb
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' 'platform-tools'
+      - name: Download exact release APK and verify checksum
+        run: |
+          curl --fail --location --retry 4 --retry-all-errors --connect-timeout 30 --max-time 300 \
+            'https://gitee.com/yangyachao-X/maidong-ktv/releases/download/2.1.8/Maidong-KTV-2.1.8.apk' \
+            --output "$APK_PATH"
+          printf '%s  %s\n' "$EXPECTED_APK_SHA256" "$APK_PATH" | sha256sum --check --strict
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run real import, install, video window and navigation checks
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: ${{ matrix.profile }}
+          avd-name: apk_${{ matrix.mode }}
+          force-avd-creation: true
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: xvfb-run -a npm run test:apk
+      - name: Upload screenshots, metadata and diagnostic report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Maidong-2.1.8-${{ matrix.mode }}-smoke-report
+          path: artifacts/apk-smoke-${{ matrix.mode }}/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Delete downloaded APK
+        if: always()
+        run: rm -f "$APK_PATH"
