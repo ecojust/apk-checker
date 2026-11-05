@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   captureNativeHost,
   prepareKtvHome,
+  publishProbeDiagnostic,
   type LoginProbeContext,
 } from "./login-smoke";
 
@@ -198,6 +199,53 @@ async function focusEmptySearch(
   await tap(context, input);
 }
 
+async function focusSearchWithNavigation(
+  context: LoginProbeContext,
+  name: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  const trace: Record<string, unknown>[] = [];
+  detail.focusNavigation = trace;
+  let keySent: string | null = null;
+  for (let step = 0; step <= 12; step++) {
+    const nodes = await ui(context, `${name}-focus-${step}`);
+    const input = find(nodes, "search_input");
+    const focused = nodes.filter((node) => node.focused === "true");
+    trace.push({
+      step,
+      keySent,
+      focused: focused.slice(0, 8).map((node) => ({
+        resourceId: node["resource-id"],
+        class: node.class,
+        bounds: node.bounds,
+      })),
+      search: input && {
+        focused: input.focused,
+        focusable: input.focusable,
+        bounds: input.bounds,
+      },
+    });
+    assert(
+      input?.class === "android.widget.EditText" && input.password !== "true",
+      "Focus navigation requires the public Maidong search EditText",
+    );
+    if (input.focused === "true") return;
+    if (step === 12) break;
+    // Maidong disables focus in touch mode on this EditText. Tab enters
+    // keyboard navigation without activating controls. In the original layout,
+    // backspace and clear are immediately to the right of the search input.
+    const onSearchAction = focused.some((node) =>
+      /:id\/key_(?:clear|backspace)$/.test(node["resource-id"]),
+    );
+    keySent = onSearchAction ? "KEYCODE_DPAD_LEFT" : "KEYCODE_TAB";
+    await context.shell("input", "keyevent", keySent);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.fail(
+    "The public search EditText did not gain focus after 12 navigation keys; no text was sent (see focusNavigation and saved UI dumps)",
+  );
+}
+
 async function verifySearchText(
   context: LoginProbeContext,
   name: string,
@@ -291,6 +339,7 @@ export async function probeHostKeyboard(
       await run(mode, async (detail) => {
         const name = `keyboard-${mode}`;
         await focusEmptySearch(context, name);
+        await focusSearchWithNavigation(context, name, detail);
         await assertSearchFocused(context, name);
         const host = await captureNativeHost(context, `${name}-before`);
         assert(
@@ -310,6 +359,7 @@ export async function probeHostKeyboard(
     if (context.sendText) {
       await run("productionText", async (detail) => {
         await focusEmptySearch(context, "keyboard-production");
+        await focusSearchWithNavigation(context, "keyboard-production", detail);
         const checks: Record<string, unknown>[] = [];
         detail.transport =
           "production sendText callback; no host keyboard event substitution";
@@ -326,10 +376,11 @@ export async function probeHostKeyboard(
           checks.push(check);
           await verifySearchText(context, name, expected, check);
         }
-        // Two immediate distinct requests expose stale clipboard reuse even if
-        // each isolated call happens to work after a screenshot delay.
+        // Distinct consecutive requests check clipboard replacement. Verify
+        // focus before each send without a screenshot between the requests.
         await assertSearchFocused(context, "keyboard-production-consecutive");
         await context.sendText!("甲");
+        await assertSearchFocused(context, "keyboard-production-consecutive-2");
         await context.sendText!("乙");
         expected += "甲乙";
         const consecutive: Record<string, unknown> = { sent: ["甲", "乙"] };
@@ -376,35 +427,7 @@ export async function probeHostKeyboard(
       path.join(context.artifacts, "keyboard-probe.json"),
       JSON.stringify(result, null, 2),
     );
-    if (process.env.GITHUB_ACTIONS) {
-      const bounded = (_key: string, value: unknown) =>
-        typeof value === "string" ? value.slice(0, 1_000) : value;
-      let diagnostic = JSON.stringify(result, bounded);
-      if (diagnostic.length > 24_000) {
-        diagnostic = JSON.stringify(
-          {
-            status: result.status,
-            errors: errors.slice(0, 8),
-            stages: ["ascii", "clipboard", "productionText"].map((stage) => {
-              const detail = result[stage] as
-                Record<string, unknown> | undefined;
-              return {
-                stage,
-                status: detail?.status,
-                error: detail?.error,
-                expected: detail?.expected,
-                actual: detail?.actual,
-              };
-            }),
-            fullDiagnostic: "keyboard-probe.json",
-          },
-          bounded,
-        );
-      }
-      console.log(
-        `::notice title=Native keyboard probe diagnostic::${diagnostic.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`,
-      );
-    }
+    publishProbeDiagnostic("Native keyboard probe diagnostic", result);
   }
   assert.equal(
     errors.length,

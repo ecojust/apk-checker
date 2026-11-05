@@ -19,7 +19,7 @@ import {
   type RuntimeCatalog,
 } from "../electron/managed-runtime";
 import type { DeviceMode, LibraryApp, Settings } from "../src/shared/types";
-import { captureNativeHost, probeProtectedLogin } from "./login-smoke";
+import { captureNativeHost, probeProtectedLogin, publishProbeDiagnostic } from "./login-smoke";
 import { probeHostKeyboard } from "./keyboard-smoke";
 
 // Opt-in integration test: fresh private SDK, AVD and adb server. No SDK Manager,
@@ -510,6 +510,10 @@ async function run(): Promise<void> {
             shell,
             command,
             screenshot,
+            rotateNativeDisplay: async () => {
+              assert(serial, "Native rotation requires the current private AVD serial");
+              await command(adb, ["-s", serial, "emu", "rotate"]);
+            },
           }),
         );
       } catch (error) {
@@ -676,18 +680,7 @@ async function run(): Promise<void> {
         privateProcessesAfterShutdown: report.privateProcessesAfterShutdown,
         retainedPrivateDataPath: report.retainedPrivateDataPath,
       };
-      const encodedDiagnostic = JSON.stringify(diagnosticData);
-      const diagnostic = (Buffer.byteLength(encodedDiagnostic, "utf8") < 48_000
-        ? encodedDiagnostic
-        : JSON.stringify({
-            status: report.status,
-            steps: diagnosticData.steps,
-            diagnosticOmitted: "Full diagnostic exceeded the annotation limit; see summary.json artifact",
-          }))
-        .replaceAll("%", "%25")
-        .replaceAll("\r", "%0D")
-        .replaceAll("\n", "%0A");
-      console.log(`::notice title=Managed ${mode} test stages::${diagnostic}`);
+      publishProbeDiagnostic(`Managed ${mode} test stages`, diagnosticData);
     }
   }
 }

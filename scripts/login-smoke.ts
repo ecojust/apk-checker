@@ -9,6 +9,7 @@ export interface LoginProbeContext {
   shell(...args: string[]): Promise<string>;
   command(file: string, args: string[], timeout?: number): Promise<string>;
   screenshot(file: string): Promise<void>;
+  rotateNativeDisplay?(): Promise<void>;
 }
 type Rectangle = { x: number; y: number; width: number; height: number };
 type HostWindow = Rectangle & { id: number; title: string };
@@ -20,6 +21,24 @@ type HostCapture = {
   window: HostWindow;
   capturedAt: string;
 };
+
+export function publishProbeDiagnostic(title: string, value: unknown): void {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const encoded = JSON.stringify(value);
+  const emit = (message: string) => console.log(
+    `::notice title=${title}::${message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`,
+  );
+  if (Buffer.byteLength(encoded, "utf8") <= 3500) {
+    emit(encoded);
+    return;
+  }
+  const base64 = Buffer.from(encoded, "utf8").toString("base64");
+  const total = Math.ceil(base64.length / 2800);
+  const diagnosticId = `${title}:${Date.now()}`;
+  for (let index = 0; index < total; index++)
+    emit(JSON.stringify({ type: "probe-diagnostic-fragment", diagnosticId,
+      title, index, total, dataBase64Chunk: base64.slice(index * 2800, (index + 1) * 2800) }));
+}
 
 // Xvfb is private to this CI job. Capture its actual primary display using only
 // Python's standard library + X11 already required by the native emulator.
@@ -157,15 +176,31 @@ print(json.dumps(dict(mimeType='image/jpeg',width=im.width,height=im.height,byte
     ]),
   );
   assert(preview.bytes <= 38000 && preview.base64.length <= 51000);
-  const message = JSON.stringify({
-    ...preview,
+  const { base64: encodedImage, ...imageMetadata } = preview;
+  const metadata = {
+    ...imageMetadata,
     capturedAt: host.capturedAt,
     ...detail,
-  })
-    .replaceAll("%", "%25")
-    .replaceAll("\r", "%0D")
-    .replaceAll("\n", "%0A");
-  console.log(`::notice title=${title}::${message}`);
+  };
+  // Public GitHub job pages truncate individual annotation messages at about
+  // 4 KB. Keep each fragment independently parseable when the API is unavailable.
+  const total = Math.ceil(encodedImage.length / 2800);
+  const previewId = `${path.basename(host.image)}:${host.capturedAt}`;
+  for (let index = 0; index < total; index++) {
+    const message = JSON.stringify({
+      type: "native-image-fragment",
+      previewId,
+      title,
+      index,
+      total,
+      ...(index === 0 ? { metadata } : {}),
+      base64Chunk: encodedImage.slice(index * 2800, (index + 1) * 2800),
+    })
+      .replaceAll("%", "%25")
+      .replaceAll("\r", "%0D")
+      .replaceAll("\n", "%0A");
+    console.log(`::notice title=${title} ${index + 1}/${total}::${message}`);
+  }
 }
 
 function summarizeNodes(value: Record<string, string>[]): unknown[] {
@@ -250,10 +285,35 @@ export async function prepareKtvHome(
   const actions: string[] = [];
   let backCount = 0;
   let updateDeferrals = 0;
+  let oldTargetWarnings = 0;
   let current: Record<string, string>[] = [];
   try {
     for (let attempt = 0; ; attempt++) {
       current = await ui(context, `${prefix}-navigation-${attempt}`);
+      const oldTargetTitle = current.find(
+        (node) => node["resource-id"] === "android:id/alertTitle" &&
+          node.text === "麦动",
+      );
+      const oldTargetMessage = current.find(
+        (node) => node["resource-id"] === "android:id/message" &&
+          node.text?.startsWith("This app was built for an older version of Android."),
+      );
+      if (oldTargetTitle && oldTargetMessage) {
+        const okay = current.find(
+          (node) => node["resource-id"] === "android:id/button1" &&
+            node.text === "OK" && node.clickable === "true",
+        );
+        const checkUpdate = current.find(
+          (node) => node["resource-id"] === "android:id/button3" &&
+            node.text === "Check for update",
+        );
+        assert(okay && checkUpdate && oldTargetWarnings === 0,
+          "Old-target Android warning did not match the observed safe OK action");
+        actions.push("Acknowledged Android's informational old-target warning using OK; did not check for updates");
+        oldTargetWarnings++;
+        await tap(context, okay);
+        continue;
+      }
       const updateTitle = current.find(
         (node) => node["resource-id"] === "android:id/alertTitle" &&
           /^发现新版本 \S/.test(node.text ?? ""),
@@ -449,8 +509,43 @@ export async function probeProtectedLogin(
     );
     assert(account, "The i歌霸 account settings action was not found");
     await context.screenshot("login-02-settings-guest.png");
-    await captureNativeHost(context, "login-02-settings");
-    await tap(context, account);
+    let settingsHost = await captureNativeHost(context, "login-02-settings");
+    let settingsImage = await readPng(path.join(context.artifacts, "login-02-settings-guest.png"));
+    const aligned = () => Math.abs(settingsImage.width / settingsImage.height -
+      settingsHost.window.width / settingsHost.window.height) /
+      (settingsImage.width / settingsImage.height) < 0.1;
+    if (!aligned()) {
+      await publishHostPreview(context, settingsHost, "Native display before alignment preview", {
+        credentialsEntered: false,
+        guestWidth: settingsImage.width,
+        guestHeight: settingsImage.height,
+      });
+      const reciprocalDifference = Math.abs(settingsImage.width / settingsImage.height -
+        settingsHost.window.height / settingsHost.window.width) /
+        (settingsImage.width / settingsImage.height);
+      assert(reciprocalDifference < 0.1 && context.rotateNativeDisplay,
+        "Native display cannot be safely aligned using the observed reciprocal aspect ratio");
+      const rotations: unknown[] = [];
+      result.nativeDisplayRotations = rotations;
+      for (let count = 1; count <= 3 && !aligned(); count++) {
+        await context.rotateNativeDisplay();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await context.screenshot("login-02-settings-guest.png");
+        settingsImage = await readPng(path.join(context.artifacts, "login-02-settings-guest.png"));
+        settingsHost = await captureNativeHost(context, `login-02-settings-rotation-${count}`);
+        rotations.push({ operation: "Native emulator console rotate clockwise", count,
+          guestWidth: settingsImage.width, guestHeight: settingsImage.height,
+          hostWindow: settingsHost.window, aligned: aligned() });
+      }
+      assert(aligned(), "Native emulator rotation did not align host and Android aspect ratios");
+    }
+    // Rotation can relayout controls, so use fresh semantic bounds for the tap.
+    const alignedSettings = await ui(context, "login-02-settings-aligned");
+    const alignedAccount = alignedSettings.find(
+      (node) => node.clickable === "true" && node["content-desc"]?.startsWith("i歌霸账号"),
+    );
+    assert(alignedAccount, "Account settings action disappeared after native display alignment");
+    await tap(context, alignedAccount);
     dialogOpened = true;
     const form = await ui(context, "login-03-dialog");
     result.lastUi = summarizeNodes(form);
@@ -572,13 +667,7 @@ export async function probeProtectedLogin(
           result.failureHostCaptureError = String(captureError).slice(0, 1500);
         });
     }
-    if (process.env.GITHUB_ACTIONS) {
-      const message = JSON.stringify(result)
-        .replaceAll("%", "%25")
-        .replaceAll("\r", "%0D")
-        .replaceAll("\n", "%0A");
-      console.log(`::notice title=Native login probe diagnostic::${message}`);
-    }
+    publishProbeDiagnostic("Native login probe diagnostic", result);
     throw error;
   } finally {
     if (dialogOpened)

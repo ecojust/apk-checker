@@ -31,3 +31,6 @@
 - [首次原生 APK run 42061147067](https://github.com/ecojust/apk-checker/actions/runs/42061147067)：手机原生 QEMU 因 Linux CI 缺 `libpulse.so.0` 退出 127；TV 在原有 180 秒安装时限失败。均未进入安全表单验证。
 - 补齐 CI `libpulse0` 后，`2ee9c03` 的[run 42065213408](https://github.com/ecojust/apk-checker/actions/runs/42065213408) 手机和电视都通过安装、原生窗口启动、宿主截图、前台检查、卸载及全部私有进程退出；TV 本轮安装约 60 秒，没有扩大时限。
 - 本轮整体仍失败：手机已确认原生登录 EditText 和 `FLAG_SECURE`，随后 guest `screencap` 未返回 PNG，原检查尚未发布宿主表单预览；TV 首页 UI 树中未找到指定设置控件。正在保留具体截图诊断、先采集独立宿主表单并增加有界 UI 诊断，不能把这轮写成安全表单全通过。
+
+- `4e11d39` 的[run 42068324515](https://github.com/ecojust/apk-checker/actions/runs/42068324515) 继续保留失败：TV 的 Android 旧 targetSdk 提示挡住首页；手机已取得原生空表单／EditText／FLAG_SECURE／宿主截图，但原生手机窗口仍竖屏（411×731），guest 横屏，无法直接按像素比例映射。guest 截图无 stdout／stderr，未解释为已证实的安全拒绝。后续将使用官方原生旋转操作后重新核对显示尺寸。
+- GitHub 将单条预览 annotation 截为 4096 字符，导致 JPEG 的 base64 不完整，原图无法从本轮注解重建。后续预览按有界分片发布并校验重组，不把截断预览当作人工截图验收。
