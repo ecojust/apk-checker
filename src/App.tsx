@@ -46,7 +46,10 @@ type Notice = {
   title: string;
   details?: string[];
 };
-type Confirmation = { type: "remove" | "uninstall"; app: LibraryApp };
+type Confirmation =
+  | { type: "remove"; app: LibraryApp }
+  | { type: "uninstall"; app: LibraryApp; mode: DeviceMode };
+type DeviceChoice = { action: "install"; app: LibraryApp } | { action: "text" };
 type ManagedRequest = {
   action: "prepare" | "install" | "launch" | "uninstall";
   mode: DeviceMode;
@@ -74,6 +77,7 @@ const initialState: AppState = {
   },
 };
 const modeNames: Record<DeviceMode, string> = { phone: "手机", tv: "电视" };
+const deviceModes: DeviceMode[] = ["phone", "tv"];
 const pageNames: Record<Page, string> = {
   desktop: "桌面",
   library: "软件库",
@@ -102,6 +106,98 @@ function AppIcon({ app, large = false }: { app: LibraryApp; large?: boolean }) {
       aria-hidden="true"
     >
       {app.name.slice(0, 1).toUpperCase()}
+    </div>
+  );
+}
+
+function ModeTag({ mode }: { mode: DeviceMode }) {
+  return (
+    <span className={`mode-tag ${mode}`}>
+      {mode === "phone" ? <Smartphone size={12} /> : <Tv size={13} />}
+      {modeNames[mode]}
+    </span>
+  );
+}
+
+function DeviceChoiceDialog({
+  title, description, action, preferredMode, options, onClose, onChoose,
+}: {
+  title: string;
+  description: string;
+  action: "install" | "text";
+  preferredMode: DeviceMode;
+  options: { mode: DeviceMode; disabled: boolean; hint: string }[];
+  onClose: () => void;
+  onChoose: (mode: DeviceMode) => void;
+}) {
+  const [selected, setSelected] = useState<DeviceMode>(() =>
+    options.find((option) => option.mode === preferredMode && !option.disabled)?.mode ??
+    options.find((option) => !option.disabled)?.mode ?? preferredMode,
+  );
+  const dialog = useRef<HTMLFormElement>(null);
+  const available = options.some((option) => option.mode === selected && !option.disabled);
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    dialog.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)')?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+    };
+  }, []);
+
+  return (
+    <div className="modal-backdrop" onClick={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <form
+        ref={dialog}
+        className="confirm-dialog device-choice-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="device-choice-title"
+        aria-describedby="device-choice-description"
+        onSubmit={(event) => { event.preventDefault(); if (available) onChoose(selected); }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); onClose(); }
+          if (event.key !== "Tab") return;
+          const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+            available
+              ? 'input:checked:not(:disabled), button:not(:disabled)'
+              : 'input:not(:disabled), button:not(:disabled)',
+          ));
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault(); last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault(); first?.focus();
+          }
+        }}
+      >
+        <span className="prepare-icon">
+          {action === "install" ? <ArrowDownToLine size={27} /> : <Keyboard size={27} />}
+        </span>
+        <h2 id="device-choice-title">{title}</h2>
+        <p id="device-choice-description">{description}</p>
+        <div className="device-options" role="radiogroup" aria-label="选择设备">
+          {options.map((option) => (
+            <label key={option.mode} className={`device-option ${selected === option.mode ? "selected" : ""} ${option.disabled ? "unavailable" : ""}`}>
+              <input type="radio" name="target-device" value={option.mode}
+                aria-label={modeNames[option.mode]} checked={selected === option.mode}
+                disabled={option.disabled} onChange={() => setSelected(option.mode)} />
+              {option.mode === "phone" ? <Smartphone size={26} /> : <Tv size={28} />}
+              <strong>{modeNames[option.mode]}</strong>
+              <span>{option.hint}</span>
+            </label>
+          ))}
+        </div>
+        <div className="confirm-actions">
+          <button type="button" className="button secondary" onClick={onClose}>取消</button>
+          <button type="submit" className="button primary" disabled={!available}>
+            {action === "install" ? `安装到${modeNames[selected]}` : "继续输入"}
+            <ArrowRight size={15} />
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -203,7 +299,7 @@ function TextInputDialog({
         <span className="prepare-icon"><Keyboard size={27} /></span>
         <h2 id="text-input-title">向{modeNames[mode]}模拟器输入文字</h2>
         <p id="text-input-description">
-          先在模拟器中点中需要填写的输入框，再回到这里用电脑输入法输入文字并发送。
+          先在模拟器中选中需要填写的输入框，确认光标出现，再回到这里用电脑输入法输入文字并发送。
         </p>
         <label className="text-input-label" htmlFor="emulator-text">要发送的文字</label>
         <textarea
@@ -265,7 +361,6 @@ function App() {
   const api = window.apkChecker;
   const [state, setState] = useState<AppState>(initialState);
   const [page, setPage] = useState<Page>("desktop");
-  const [mode, setMode] = useState<DeviceMode>("phone");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(!!api);
@@ -276,6 +371,7 @@ function App() {
   const [draft, setDraft] = useState<Settings>(initialState.settings);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [textInputMode, setTextInputMode] = useState<DeviceMode | null>(null);
+  const [deviceChoice, setDeviceChoice] = useState<DeviceChoice | null>(null);
   const [preparationRequest, setPreparationRequest] =
     useState<ManagedRequest | null>(null);
   const [licenseText, setLicenseText] = useState("");
@@ -286,7 +382,6 @@ function App() {
   const [cancelRequested, setCancelRequested] = useState(false);
   const cancelledPreparation = useRef(false);
   const prepareCancel = useRef<HTMLButtonElement>(null);
-  const initialized = useRef(false);
   const refreshSequence = useRef(0);
   const activeOperation = useRef(false);
   const modalCancel = useRef<HTMLButtonElement>(null);
@@ -297,10 +392,6 @@ function App() {
     const nextState = await api.getState();
     if (sequence !== refreshSequence.current) return;
     setState(nextState);
-    if (!initialized.current) {
-      setMode(nextState.settings.defaultMode);
-      initialized.current = true;
-    }
   }, [api]);
 
   useEffect(() => {
@@ -407,19 +498,28 @@ function App() {
     };
   }, [preparationRequest, api]);
 
-  const selectedAvd =
-    mode === "phone" ? state.settings.phoneAvd : state.settings.tvAvd;
-  const isInstalled = (app: LibraryApp) =>
-    !!selectedAvd && app.installed[mode]?.avd === selectedAvd;
-  const installedApps = state.apps.filter(isInstalled);
-  const activeDevice = state.runtime.devices.find(
-    (device) => device.avd === selectedAvd && device.state === "device",
+  const avdForMode = (deviceMode: DeviceMode) =>
+    deviceMode === "phone" ? state.settings.phoneAvd : state.settings.tvAvd;
+  const isInstalled = (app: LibraryApp, deviceMode: DeviceMode) => {
+    const avd = avdForMode(deviceMode);
+    return !!avd && app.installed[deviceMode]?.avd === avd;
+  };
+  const installedModes = (app: LibraryApp) =>
+    deviceModes.filter((deviceMode) => isInstalled(app, deviceMode));
+  const installedApps = state.apps.flatMap((app) =>
+    installedModes(app).map((mode) => ({ app, mode })),
   );
+  const runningModes = deviceModes.filter((deviceMode) => {
+    const avd = avdForMode(deviceMode);
+    return !!avd && state.runtime.devices.some(
+      (device) => device.avd === avd && device.state === "device",
+    );
+  });
   const managed = state.managed;
   const modeReady = (deviceMode: DeviceMode) =>
     !!managed?.coreReady &&
     !!(deviceMode === "phone" ? managed.phoneReady : managed.tvReady);
-  const environmentReady = modeReady(mode);
+  const environmentReady = deviceModes.some(modeReady);
   const isPreparing = preparingMode !== null || !!managed?.preparing;
   const progressPercent =
     progress?.totalBytes && progress.completedBytes !== undefined
@@ -429,8 +529,9 @@ function App() {
         )
       : undefined;
   const totalSize = state.apps.reduce((total, app) => total + app.size, 0);
-  const baseApps = page === "desktop" ? installedApps : state.apps;
-  const shownApps = baseApps.filter((app) => {
+  const baseApps: { app: LibraryApp; mode?: DeviceMode }[] =
+    page === "desktop" ? installedApps : state.apps.map((app) => ({ app }));
+  const shownApps = baseApps.filter(({ app }) => {
     const match = `${app.name} ${app.packageName} ${app.fileName}`
       .toLocaleLowerCase()
       .includes(search.toLocaleLowerCase());
@@ -438,7 +539,7 @@ function App() {
       match &&
       (page === "desktop" ||
         filter === "all" ||
-        (filter === "installed" ? isInstalled(app) : !isInstalled(app)))
+        (filter === "installed" ? installedModes(app).length > 0 : installedModes(app).length === 0))
     );
   });
   const disabled = !!busy || loading;
@@ -626,7 +727,7 @@ function App() {
       action === "prepare"
         ? `${modeNames[requestedMode]}模拟器已准备好`
         : action === "install"
-          ? `${app!.name} 已安装到${modeNames[requestedMode]}桌面`
+          ? `${app!.name} 已安装到${modeNames[requestedMode]}模拟器`
           : action === "launch"
             ? `${app!.name} 已在独立窗口打开`
             : "应用已卸载";
@@ -733,7 +834,7 @@ function App() {
           </div>
           <p>一个应用，两种体验</p>
           <span>
-            在手机与电视之间切换，
+            安装时选择手机或电视，
             <br />
             发现应用的更多可能。
           </span>
@@ -875,55 +976,10 @@ function App() {
 
           {page !== "settings" && (
             <>
-              <section className="workspace-toolbar" aria-label="应用视图设置">
-                <div className="mode-control">
-                  <span className="toolbar-label">运行模式</span>
-                  <div className="segmented" role="group" aria-label="运行模式">
-                    <button
-                      aria-pressed={mode === "phone"}
-                      className={mode === "phone" ? "selected" : ""}
-                      onClick={() => setMode("phone")}
-                      disabled={disabled}
-                    >
-                      <Smartphone size={16} />
-                      手机模式
-                    </button>
-                    <button
-                      aria-pressed={mode === "tv"}
-                      className={mode === "tv" ? "selected" : ""}
-                      onClick={() => setMode("tv")}
-                      disabled={disabled}
-                    >
-                      <Tv size={17} />
-                      电视模式
-                    </button>
-                  </div>
-                </div>
-                <div className="device-status">
-                  <span
-                    className={`status-dot ${activeDevice ? "green" : ""}`}
-                  />
-                  {activeDevice
-                    ? "设备运行中"
-                    : environmentReady
-                      ? "模拟器待启动"
-                      : "首次使用自动准备"}
-                  <span className="device-status-divider" />
-                  <button
-                    onClick={() => navigate("settings")}
-                    aria-label="模拟器设置"
-                  >
-                    <Settings2 size={15} />
-                  </button>
-                </div>
-              </section>
               <div className="section-heading">
                 <div>
                   <h2>{page === "desktop" ? "我的应用" : "全部应用"}</h2>
                   <span className="number-badge">{baseApps.length}</span>
-                  {page === "desktop" && (
-                    <span className="mode-caption">{modeNames[mode]}桌面</span>
-                  )}
                 </div>
                 <div className="list-tools">
                   {page === "desktop" && (
@@ -932,16 +988,17 @@ function App() {
                       disabled={disabled}
                       onClick={() => {
                         if (!api) { explainPreview(); return; }
-                        if (!activeDevice) {
+                        if (!runningModes.length) {
                           setNotice({
                             type: "info",
-                            title: `请先打开一个${modeNames[mode]}应用`,
-                            details: ["模拟器窗口打开后，点中需要填写的输入框，再使用“输入文字”。"],
+                            title: "请先打开一个应用",
+                            details: ["模拟器窗口打开后，选中需要填写的输入框，再使用“输入文字”。"],
                           });
                           return;
                         }
                         setNotice(null);
-                        setTextInputMode(mode);
+                        if (runningModes.length === 1) setTextInputMode(runningModes[0]);
+                        else setDeviceChoice({ action: "text" });
                       }}
                     >
                       <Keyboard size={15} />
@@ -991,112 +1048,90 @@ function App() {
                 <div
                   className={`app-grid ${page === "desktop" ? "desktop-grid" : ""}`}
                 >
-                  {shownApps.map((app) => (
-                    <article className="application-card" key={app.id}>
+                  {shownApps.map(({ app, mode: cardMode }) => {
+                    const modes = installedModes(app);
+                    const cardKey = `${app.id}-${cardMode || "library"}`;
+                    return (
+                    <article className="application-card" key={cardKey}
+                      aria-label={`${app.name}${cardMode ? ` · ${modeNames[cardMode]}` : ""}`}>
                       <div className="app-card-top">
                         <AppIcon app={app} large />
                         <div className="app-menu-wrap">
                           <button
                             className="icon-button more-button"
-                            aria-label={`${app.name} 更多操作`}
-                            aria-expanded={openMenu === app.id}
+                            aria-label={`${app.name}${cardMode ? ` · ${modeNames[cardMode]}` : ""} 更多操作`}
+                            aria-expanded={openMenu === cardKey}
                             onClick={(event) => {
                               event.stopPropagation();
-                              setOpenMenu(openMenu === app.id ? null : app.id);
+                              setOpenMenu(openMenu === cardKey ? null : cardKey);
                             }}
                             disabled={disabled}
                           >
                             <MoreHorizontal size={20} />
                           </button>
-                          {openMenu === app.id && (
-                            <div
-                              className="app-menu"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              {isInstalled(app) && (
-                                <button
-                                  onClick={() => {
-                                    setConfirmation({ type: "uninstall", app });
-                                    setOpenMenu(null);
-                                  }}
-                                >
+                          {openMenu === cardKey && (
+                            <div className="app-menu" onClick={(event) => event.stopPropagation()}>
+                              {(cardMode ? [cardMode] : modes).map((deviceMode) => (
+                                <button key={deviceMode} onClick={() => {
+                                  setConfirmation({ type: "uninstall", app, mode: deviceMode });
+                                  setOpenMenu(null);
+                                }}>
                                   <ArrowDownToLine size={15} />
-                                  卸载此设备上的应用
+                                  从{modeNames[deviceMode]}卸载
                                 </button>
-                              )}
+                              ))}
                               <button
                                 className="danger-text"
-                                disabled={Object.values(app.installed).some(
-                                  Boolean,
-                                )}
-                                title={
-                                  Object.values(app.installed).some(Boolean)
-                                    ? "请先卸载手机和电视设备上的应用，再移除 APK"
-                                    : "移除保存的 APK 文件"
-                                }
+                                disabled={Object.values(app.installed).some(Boolean)}
+                                title={Object.values(app.installed).some(Boolean)
+                                  ? "请先卸载手机和电视设备上的应用，再移除 APK"
+                                  : "移除保存的 APK 文件"}
                                 onClick={() => {
                                   setConfirmation({ type: "remove", app });
                                   setOpenMenu(null);
                                 }}
                               >
                                 <Trash2 size={15} />
-                                {Object.values(app.installed).some(Boolean)
-                                  ? "卸载后可移除"
-                                  : "从软件库移除"}
+                                {Object.values(app.installed).some(Boolean) ? "卸载后可移除" : "从软件库移除"}
                               </button>
                             </div>
                           )}
                         </div>
                       </div>
                       <h3 title={app.name}>{app.name}</h3>
-                      <p className="package-name" title={app.packageName}>
-                        {app.packageName}
-                      </p>
+                      <p className="package-name" title={app.packageName}>{app.packageName}</p>
                       <div className="app-metadata">
-                        <span>
-                          v{app.versionName || app.versionCode || "—"}
-                        </span>
+                        <span>v{app.versionName || app.versionCode || "—"}</span>
                         <span className="metadata-dot" />
                         <span>{formatSize(app.size)}</span>
                       </div>
                       <div className="app-card-bottom">
-                        <span
-                          className={`app-status ${isInstalled(app) ? "installed" : ""}`}
-                        >
-                          {isInstalled(app) ? (
-                            <CheckCircle2 size={13} />
-                          ) : (
-                            <Circle size={12} />
+                        <div className="installation-tags">
+                          {(cardMode ? [cardMode] : modes).map((deviceMode) => (
+                            <ModeTag key={deviceMode} mode={deviceMode} />
+                          ))}
+                          {!cardMode && !modes.length && (
+                            <span className="app-status"><Circle size={12} />待安装</span>
                           )}
-                          {isInstalled(app) ? "已安装" : "待安装"}
-                        </span>
+                        </div>
                         <button
-                          className={
-                            isInstalled(app)
-                              ? "button small open-button"
-                              : "button small install-button"
-                          }
-                          disabled={disabled}
-                          onClick={() =>
-                            requestManagedAction({
-                              action: isInstalled(app) ? "launch" : "install",
-                              mode,
-                              app,
-                            })
-                          }
+                          className={`button small ${cardMode ? "open-button" : "install-button"}`}
+                          disabled={disabled || (!cardMode && modes.length === deviceModes.length)}
+                          onClick={() => {
+                            if (cardMode) requestManagedAction({ action: "launch", mode: cardMode, app });
+                            else setDeviceChoice({ action: "install", app });
+                          }}
                         >
-                          {busy?.endsWith(app.id) ? (
-                            <LoaderCircle className="spin" size={14} />
-                          ) : isInstalled(app) ? (
-                            <Play size={13} fill="currentColor" />
-                          ) : (
-                            <ArrowDownToLine size={14} />
-                          )}
-                          {isInstalled(app) ? "打开" : "安装"}
+                          {busy?.endsWith(app.id) ? <LoaderCircle className="spin" size={14} />
+                            : cardMode ? <Play size={13} fill="currentColor" />
+                            : modes.length === deviceModes.length ? <CheckCircle2 size={14} />
+                            : <ArrowDownToLine size={14} />}
+                          {cardMode ? "打开" : modes.length === deviceModes.length ? "已全部安装" : "安装"}
                         </button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : search || (page === "library" && filter !== "all") ? (
                 <div className="empty-state search-empty">
@@ -1118,7 +1153,7 @@ function App() {
               ) : (
                 <section className="empty-state">
                   <div
-                    className={`device-illustration ${mode === "tv" ? "tv-illustration" : ""}`}
+                    className="device-illustration"
                     aria-hidden="true"
                   >
                     <div className="illustration-halo" />
@@ -1156,12 +1191,12 @@ function App() {
                       {page === "library"
                         ? "你的应用收藏，从这里开始"
                         : state.apps.length
-                          ? `给${modeNames[mode]}桌面装上第一个应用`
+                          ? "给桌面装上第一个应用"
                           : "让 Android 应用，来到你的桌面"}
                     </h2>
                     <p>
                       {page === "desktop" && state.apps.length
-                        ? `软件库中有 ${state.apps.length} 个应用，选择一个安装到${modeNames[mode]}设备。`
+                        ? `软件库中有 ${state.apps.length} 个应用，安装时选择手机或电视。`
                         : "导入喜欢的应用，在手机或电视模式下自由体验。"}
                       <br />
                       {page === "library"
@@ -1228,7 +1263,7 @@ function App() {
                     </button>
                     <button
                       className="step-card"
-                      onClick={() => navigate("settings")}
+                      onClick={() => navigate("library")}
                     >
                       <span className="step-icon">
                         <Smartphone size={21} />
@@ -1263,7 +1298,7 @@ function App() {
                 <div className="list-footer">
                   <span>
                     {page === "desktop"
-                      ? `${installedApps.length} 个应用已安装到当前${modeNames[mode]}设备`
+                      ? `${installedApps.length} 个安装 · 手机 ${installedApps.filter((entry) => entry.mode === "phone").length} · 电视 ${installedApps.filter((entry) => entry.mode === "tv").length}`
                       : `${state.apps.length} 个应用 · 共 ${formatSize(totalSize)}`}
                   </span>
                   <span>
@@ -1431,13 +1466,13 @@ function App() {
                 }}
               >
                 <div>
-                  <h2>默认运行模式</h2>
-                  <p>下次打开 APK Checker 时优先显示这个桌面。</p>
+                  <h2>默认安装设备</h2>
+                  <p>安装应用时默认选中此设备，仍可在安装前更改。</p>
                 </div>
                 <label className="select-wrap">
-                  <span className="visually-hidden">默认运行模式</span>
+                  <span className="visually-hidden">默认安装设备</span>
                   <select
-                    aria-label="默认运行模式"
+                    aria-label="默认安装设备"
                     value={draft.defaultMode}
                     disabled={disabled}
                     onChange={(event) =>
@@ -1638,6 +1673,33 @@ function App() {
           </div>
         </div>
       )}
+      {deviceChoice && (
+        <DeviceChoiceDialog
+          title={deviceChoice.action === "install" ? `安装「${deviceChoice.app.name}」` : "选择输入文字的设备"}
+          description={deviceChoice.action === "install"
+            ? "选择要安装到的设备。安装成功后，应用会显示在桌面并标注设备类型。"
+            : "选择需要填写文字的模拟器，请先在对应窗口中选中输入框。"}
+          action={deviceChoice.action}
+          preferredMode={state.settings.defaultMode}
+          options={deviceModes.map((deviceMode) => {
+            const installed = deviceChoice.action === "install" && isInstalled(deviceChoice.app, deviceMode);
+            const running = runningModes.includes(deviceMode);
+            return {
+              mode: deviceMode,
+              disabled: deviceChoice.action === "install" ? installed : !running,
+              hint: deviceChoice.action === "text" ? (running ? "运行中" : "请先打开应用")
+                : installed ? "已安装" : modeReady(deviceMode) ? "系统已就绪" : "首次安装自动准备",
+            };
+          })}
+          onClose={() => setDeviceChoice(null)}
+          onChoose={(chosenMode) => {
+            const choice = deviceChoice;
+            setDeviceChoice(null);
+            if (choice.action === "install") requestManagedAction({ action: "install", mode: chosenMode, app: choice.app });
+            else setTextInputMode(chosenMode);
+          }}
+        />
+      )}
       {textInputMode && (
         <TextInputDialog
           mode={textInputMode}
@@ -1679,12 +1741,12 @@ function App() {
             <h2 id="confirm-title">
               {confirmation.type === "remove"
                 ? "从软件库移除应用？"
-                : `从${modeNames[mode]}设备卸载应用？`}
+                : `从${modeNames[confirmation.mode]}设备卸载应用？`}
             </h2>
             <p id="confirm-description">
               {confirmation.type === "remove"
                 ? `将移除「${confirmation.app.name}」的软件库记录及保存的 APK 副本。原始 APK 文件不受影响。`
-                : `将从当前${modeNames[mode]}设备卸载「${confirmation.app.name}」，该设备上的应用数据也会被删除。软件库中的 APK 会保留。`}
+                : `将从${modeNames[confirmation.mode]}设备卸载「${confirmation.app.name}」，该设备上的应用数据也会被删除。软件库中的 APK 会保留。`}
             </p>
             <div className="confirm-actions">
               <button
@@ -1702,7 +1764,7 @@ function App() {
                   if (current.type === "uninstall")
                     requestManagedAction({
                       action: "uninstall",
-                      mode,
+                      mode: current.mode,
                       app: current.app,
                     });
                   else

@@ -1043,6 +1043,34 @@ h2 {
   border-top: 1px solid #f0eef5;
   padding-top: 14px;
   margin-top: 16px;
+  gap: 10px;
+}
+.app-card-bottom > .button {
+  flex-shrink: 0;
+}
+.installation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.mode-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.mode-tag.phone {
+  color: #597c9b;
+  background: #edf4fb;
+}
+.mode-tag.tv {
+  color: #8162b3;
+  background: #f2edfb;
 }
 .app-status {
   display: flex;
@@ -1539,6 +1567,56 @@ h2 {
   width: 490px;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
+}
+.device-choice-dialog {
+  width: 460px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+.device-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 22px;
+}
+.device-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 17px 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  color: #8e869c;
+}
+.device-option.selected {
+  border-color: #9477d2;
+  background: #f7f3ff;
+  color: #7756b8;
+}
+.device-option:focus-within {
+  outline: 2px solid #9477d2;
+  outline-offset: 3px;
+}
+.device-option.unavailable {
+  cursor: default;
+  background: #f7f7f9;
+  color: #a2a0ac;
+}
+.device-option input {
+  position: absolute;
+  top: 17px;
+  right: 15px;
+  accent-color: #8664c9;
+}
+.device-option strong {
+  font-size: 14px;
+}
+.device-option > span {
+  font-size: 11px;
+  line-height: 1.6;
 }
 .text-input-label {
   display: block;

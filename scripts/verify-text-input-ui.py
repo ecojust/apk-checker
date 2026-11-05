@@ -4,7 +4,7 @@ import json
 import os
 fixture=r'''(() => {
   let changed=()=>{};
-  const state={apps:[],settings:{sdkPath:'/private/runtime',scrcpyPath:'/private/runtime/scrcpy',phoneAvd:'Phone',tvAvd:'TV',defaultMode:'phone'},runtime:{sdkFound:true,adbFound:true,emulatorFound:true,aaptFound:true,scrcpyFound:true,avds:['Phone','TV'],devices:[{serial:'emulator-5554',avd:'Phone',state:'device'},{serial:'emulator-5556',avd:'TV',state:'device'}],issues:[]}};
+  const state={apps:[],settings:{sdkPath:'/private/runtime',scrcpyPath:'/private/runtime/scrcpy',phoneAvd:'Phone',tvAvd:'TV',defaultMode:'phone'},runtime:{sdkFound:true,adbFound:true,emulatorFound:true,aaptFound:true,scrcpyFound:true,avds:['Phone','TV'],devices:[{serial:'emulator-5554',avd:'Phone',state:'device'}],issues:[]}};
   window.fixture={state,calls:[],resolveSend:null,change:()=>changed()};
   window.apkChecker={getState:async()=>structuredClone(state),onProgress:()=>()=>{},onStateChanged:cb=>{changed=cb;return()=>{}},sendText:(mode,text)=>{window.fixture.calls.push({mode,text});return new Promise(resolve=>window.fixture.resolveSend=resolve)}};
 })();'''
@@ -52,21 +52,26 @@ with sync_playwright() as p:
   page.screenshot(path=os.environ.get('APK_UI_SCREENSHOT', '/tmp/text-input-ui-1040.png'))
   field.press('Escape');expect(dialog).not_to_be_visible()
   results.append('success wording is sent, not Android accepted; close clears text and restores focus')
-  page.get_by_role('button',name='电视模式',exact=True).click()
+  # With two running devices, text input chooses its target at action time.
+  page.evaluate("window.fixture.state.runtime.devices.push({serial:'emulator-5556',avd:'TV',state:'device'});window.fixture.change()")
   button.click()
+  chooser=page.get_by_role('dialog',name='选择输入文字的设备')
+  expect(chooser).to_be_visible()
+  chooser.get_by_role('radio',name='电视',exact=True).check()
+  chooser.get_by_role('button',name='继续输入',exact=True).click()
   tv=page.get_by_role('dialog',name='向电视模拟器输入文字')
   field=tv.get_by_role('textbox',name='要发送的文字')
   field.fill('line1');field.press('Shift+Enter');field.press('a')
   expect(field).to_have_value('line1\na')
   assert len(page.evaluate('window.fixture.calls'))==2
-  # Changing page selection in the background cannot retarget an open dialog.
-  page.get_by_role('button',name='手机模式',exact=True).evaluate('(button)=>button.click()')
+  # A runtime/default-mode refresh cannot retarget an open text dialog.
+  page.evaluate("window.fixture.state.runtime.devices=window.fixture.state.runtime.devices.filter(d=>d.avd==='Phone');window.fixture.state.settings.defaultMode='phone';window.fixture.change()")
   expect(tv).to_be_visible()
   field.press('Enter')
   assert page.evaluate('window.fixture.calls')[-1]=={'mode':'tv','text':'line1\na'}
   page.evaluate('window.fixture.resolveSend({ok:true})')
   expect(tv).not_to_be_visible()
-  results.append('Shift+Enter keeps newline; dialog target remains TV after background selection changes')
+  results.append('Two running devices prompt for target; Shift+Enter keeps newline; open dialog remains TV after runtime refresh')
   button.click()
   field=dialog.get_by_role('textbox',name='要发送的文字')
   field.fill('测'*6000)
@@ -81,11 +86,38 @@ with sync_playwright() as p:
   dialog.get_by_role('button',name='取消',exact=True).click()
   button.click();expect(field).to_have_value('');field.press('Escape')
   results.append('UTF-8 byte cap, cancel clears text, and focus trap verified')
+  # If the chosen device goes offline, keep the target invalid until explicitly changed.
+  page.evaluate("window.fixture.state.runtime.devices.push({serial:'emulator-5556',avd:'TV',state:'device'});window.fixture.change()")
+  button.click()
+  expect(chooser.get_by_role('radio',name='手机',exact=True)).to_be_checked()
+  page.evaluate("window.fixture.state.runtime.devices=window.fixture.state.runtime.devices.filter(d=>d.avd==='TV');window.fixture.change()")
+  expect(chooser.get_by_role('radio',name='手机',exact=True)).to_be_disabled()
+  expect(chooser.get_by_role('radio',name='手机',exact=True)).to_be_checked()
+  proceed=chooser.get_by_role('button',name='继续输入',exact=True)
+  expect(proceed).to_be_disabled()
+  cancel=chooser.get_by_role('button',name='取消',exact=True)
+  remaining=chooser.get_by_role('radio',name='电视',exact=True)
+  cancel.focus();cancel.press('Tab');expect(remaining).to_be_focused()
+  expect(proceed).to_be_disabled()
+  remaining.press('Shift+Tab');expect(cancel).to_be_focused()
+  cancel.press('Shift+Tab');expect(remaining).to_be_focused()
+  remaining.press('Space');expect(remaining).to_be_checked();expect(proceed).to_be_enabled()
+  proceed.click();expect(tv).to_be_visible()
+  tv.get_by_role('textbox',name='要发送的文字').fill('目标确认')
+  tv.get_by_role('button',name='发送文字',exact=True).click()
+  assert page.evaluate('window.fixture.calls')[-1]=={'mode':'tv','text':'目标确认'}
+  page.evaluate('window.fixture.resolveSend({ok:true})');expect(tv).not_to_be_visible()
+  results.append('Offline selected device disables Continue; keyboard can reach remaining radio without silent retarget; explicit TV choice sends to TV')
+  page.evaluate("window.fixture.state.runtime.devices=[{serial:'emulator-5556',avd:'TV',state:'device'}];window.fixture.change()")
+  button.click()
+  expect(tv).to_be_visible()
+  expect(page.get_by_role('dialog',name='选择输入文字的设备')).not_to_be_visible()
+  tv.get_by_role('button',name='取消',exact=True).click()
+  results.append('Only-running TV is selected directly without a global mode tab')
   page.evaluate('window.fixture.state.runtime.devices=[];window.fixture.change()')
-  expect(page.get_by_text('设备运行中',exact=True)).not_to_be_visible()
   button.click()
   expect(page.get_by_role('dialog')).not_to_be_visible()
-  expect(page.get_by_text('请先打开一个手机应用',exact=True)).to_be_visible()
+  expect(page.get_by_text('请先打开一个应用',exact=True)).to_be_visible()
   results.append('closed mode has explicit guidance and never invokes sendText')
   assert not errors, errors
   browser.close()
