@@ -46,9 +46,16 @@ jobs:
         run: npm ci
       - name: Install display and SDK tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y scrcpy xvfb
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' 'platform-tools'
+          if [ "$APK_TEST_SYSTEM_IMAGE" = 'system-images;android-36;android-tv;x86_64' ]; then
+            # Hosted Android runners already provide Xvfb, adb and Build-Tools.
+            # The pinned modern scrcpy below replaces the distro package.
+            command -v xvfb-run
+            test -x "$ANDROID_HOME/platform-tools/adb"
+          else
+            sudo apt-get update
+            sudo apt-get install -y scrcpy xvfb
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' 'platform-tools'
+          fi
       - name: Install current scrcpy for Android 16 compatibility
         if: inputs.target == 'tv-modern'
         run: |
