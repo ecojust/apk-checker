@@ -1,0 +1,55 @@
+name: Build desktop apps
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-latest
+            package: --mac dmg --arm64
+            artifact: APK-Checker-macOS-arm64
+          - name: macOS Intel
+            os: macos-15-intel
+            package: --mac dmg --x64
+            artifact: APK-Checker-macOS-x64
+          - name: Windows x64
+            os: windows-latest
+            package: --win nsis --x64
+            artifact: APK-Checker-Windows-x64
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test
+        run: npm test
+      - name: Typecheck and build
+        run: npm run build
+      - name: Package unsigned installer
+        run: npx electron-builder ${{ matrix.package }} --publish never
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            release/*.dmg
+            release/*.exe
+          if-no-files-found: error
+          retention-days: 14
