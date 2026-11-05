@@ -35,11 +35,14 @@ X.XCloseDisplay.argtypes=[D]
 X.XDefaultRootWindow.argtypes=[D]; X.XDefaultRootWindow.restype=W
 X.XRaiseWindow.argtypes=[D,W]; X.XSetInputFocus.argtypes=[D,W,C.c_int,T]
 X.XGetInputFocus.argtypes=[D,C.POINTER(W),C.POINTER(C.c_int)]
+X.XQueryKeymap.argtypes=[D,C.POINTER(C.c_ubyte)]
+X.XTranslateCoordinates.argtypes=[D,W,W,C.c_int,C.c_int,C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(W)]; X.XTranslateCoordinates.restype=C.c_int
 X.XSync.argtypes=[D,C.c_int]; X.XFlush.argtypes=[D]
 X.XStringToKeysym.argtypes=[C.c_char_p]; X.XStringToKeysym.restype=C.c_ulong
 X.XKeysymToKeycode.argtypes=[D,C.c_ulong]; X.XKeysymToKeycode.restype=C.c_ubyte
 XT.XTestQueryExtension.argtypes=[D,C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(C.c_int)]
 XT.XTestFakeKeyEvent.argtypes=[D,C.c_uint,C.c_int,C.c_ulong]; XT.XTestFakeKeyEvent.restype=C.c_int
+XT.XTestFakeMotionEvent.argtypes=[D,C.c_int,C.c_int,C.c_int,C.c_ulong]; XT.XTestFakeMotionEvent.restype=C.c_int
 X.XInternAtom.argtypes=[D,C.c_char_p,C.c_int]; X.XInternAtom.restype=A
 X.XCreateSimpleWindow.argtypes=[D,W,C.c_int,C.c_int,C.c_uint,C.c_uint,C.c_uint,C.c_ulong,C.c_ulong]; X.XCreateSimpleWindow.restype=W
 X.XDestroyWindow.argtypes=[D,W]
@@ -49,11 +52,11 @@ X.XSendEvent.argtypes=[D,W,C.c_int,C.c_long,C.POINTER(Event)]
 X.XPending.argtypes=[D]; X.XNextEvent.argtypes=[D,C.POINTER(Event)]
 X.XConnectionNumber.argtypes=[D]; X.XConnectionNumber.restype=C.c_int
 mode=sys.argv[1]; window=int(sys.argv[2]); text=sys.argv[3]
-assert mode in ('ascii','clipboard','clear')
-assert text == {'ascii':'abc123','clipboard':'\u6d4b\u8bd5123','clear':''}[mode], 'Only public probe text is permitted'
+assert mode in ('ascii','clipboard','release')
+assert text == {'ascii':'abc123','clipboard':'\u6d4b\u8bd5123','release':''}[mode], 'Only public probe text is permitted'
 display=X.XOpenDisplay(None)
 if not display: raise RuntimeError('Cannot connect to the private Xvfb DISPLAY')
-owner=0; held=set(); served=[]; sent=[]
+owner=0; held=set(); served=[]; sent=[]; cleanup={}
 def key(name,down):
     code=int(X.XKeysymToKeycode(display,X.XStringToKeysym(name.encode('ascii'))))
     if not code: raise RuntimeError('X11 key is unmapped: '+name)
@@ -71,11 +74,7 @@ try:
     if mode=='ascii':
         for character in text:
             key(character,True); time.sleep(0.03); key(character,False); time.sleep(0.05)
-    elif mode=='clear':
-        key('Control_L',True); key('a',True); key('a',False); key('Control_L',False)
-        time.sleep(0.1)
-        key('BackSpace',True); key('BackSpace',False)
-    else:
+    elif mode=='clipboard':
         atom=lambda name: X.XInternAtom(display,name.encode('ascii'),False)
         clipboard=atom('CLIPBOARD'); utf8=atom('UTF8_STRING'); targets=atom('TARGETS'); atom_type=atom('ATOM')
         formats=[utf8,atom('text/plain;charset=utf-8'),atom('text/plain'),atom('TEXT')]
@@ -112,11 +111,35 @@ try:
         serve(2.0)
         if 'UTF8_STRING' not in served: raise RuntimeError('Native window did not request the UTF-8 host clipboard payload')
     X.XSync(display,0)
-    print(json.dumps(dict(mode=mode,text=text,window=window,keyEvents=sent,clipboardRequests=served)))
 finally:
-    for code in held: XT.XTestFakeKeyEvent(display,code,False,0)
-    if owner: X.XDestroyWindow(display,owner)
-    X.XSync(display,0); X.XCloseDisplay(display)
+    try:
+        X.XSetInputFocus(display,window,2,0); X.XSync(display,0)
+        focused=W(); revert=C.c_int(); X.XGetInputFocus(display,C.byref(focused),C.byref(revert))
+        if focused.value!=window: raise RuntimeError('Modifier cleanup requires focus on the exact private emulator main window')
+        modifiers={name:int(X.XKeysymToKeycode(display,X.XStringToKeysym(name.encode('ascii')))) for name in ('Control_L','Control_R','Alt_L','Alt_R','Shift_L','Shift_R','Super_L','Super_R')}
+        def pressed_modifiers():
+            state=(C.c_ubyte*32)(); X.XQueryKeymap(display,state)
+            return [name for name,code in modifiers.items() if code and state[code//8] & (1<<(code%8))]
+        before=pressed_modifiers()
+        for code in held: XT.XTestFakeKeyEvent(display,code,False,0)
+        # This Xvfb server belongs only to this CI test. Release modifiers even
+        # after an interrupted sequence, then refresh Qt's pointer state without
+        # clicking (Emulator's Ctrl gesture overlay otherwise may remain visible).
+        for code in set(modifiers.values()):
+            if code: XT.XTestFakeKeyEvent(display,code,False,0)
+        X.XSync(display,0)
+        after=pressed_modifiers()
+        x,y=C.c_int(),C.c_int(); child=W()
+        if not X.XTranslateCoordinates(display,window,X.XDefaultRootWindow(display),24,24,C.byref(x),C.byref(y),C.byref(child)):
+            raise RuntimeError('Cannot locate the private emulator window for pointer cleanup')
+        moved=bool(XT.XTestFakeMotionEvent(display,-1,x.value+1,y.value,0) and XT.XTestFakeMotionEvent(display,-1,x.value,y.value,0))
+        X.XSync(display,0); time.sleep(0.2)
+        cleanup=dict(modifiersBefore=before,modifiersAfter=after,pointerMoved=moved,clickSent=False)
+        if after or not moved: raise RuntimeError('Private X11 modifier/pointer cleanup did not complete: '+json.dumps(cleanup))
+    finally:
+        if owner: X.XDestroyWindow(display,owner)
+        X.XSync(display,0); X.XCloseDisplay(display)
+print(json.dumps(dict(mode=mode,text=text,window=window,keyEvents=sent,clipboardRequests=served,cleanup=cleanup)))
 `;
 
 function attributes(xml: string): Node[] {
@@ -218,18 +241,19 @@ async function focusEmptySearch(
   if (!empty(input)) {
     const clearing: Record<string, unknown> = { before: input.text };
     detail.clearing = clearing;
-    await assertSearchFocused(context, `${name}-clear`);
-    const host = await captureNativeHost(context, `${name}-before-clear-host`);
     assert(
-      host.window.title.includes(context.avd),
-      "Search clearing requires the exact private test AVD window",
+      input.text.length <= 128 && !/[\uD800-\uDFFF]/.test(input.text),
+      "Fixture clearing requires at most 128 BMP characters in the public search field",
     );
-    clearing.transport = JSON.parse(
-      await context.command(
-        "python3",
-        ["-c", X11_KEYBOARD, "clear", String(host.window.id), ""],
-        15_000,
-      ),
+    await assertSearchFocused(context, `${name}-clear`);
+    clearing.transport =
+      "Android fixture cleanup: MOVE_END then bounded DEL; not host Ctrl+A validation";
+    clearing.deleteKeys = input.text.length;
+    await context.shell("input", "keyevent", "KEYCODE_MOVE_END");
+    await context.shell(
+      "input",
+      "keyevent",
+      ...Array<string>(input.text.length).fill("KEYCODE_DEL"),
     );
     await new Promise((resolve) => setTimeout(resolve, 600));
     nodes = await ui(context, `${name}-cleared`);
@@ -445,6 +469,7 @@ function compactDiagnostic(
       status: result.status,
       searchCleared: result.searchCleared,
       homeRestored: result.homeRestored,
+      hostInputCleanup: result.hostInputCleanup,
       fullDiagnostic: "keyboard-probe.json",
     };
     for (const stage of ["ascii", "clipboard", "productionText"]) {
@@ -633,6 +658,27 @@ export async function probeHostKeyboard(
       () => undefined,
     );
   } finally {
+    try {
+      const host = await captureNativeHost(
+        context,
+        "keyboard-before-host-cleanup",
+      );
+      assert(
+        host.window.title.includes(context.avd),
+        "Host input cleanup requires the exact private test AVD window",
+      );
+      const released = JSON.parse(
+        await context.command(
+          "python3",
+          ["-c", X11_KEYBOARD, "release", String(host.window.id), ""],
+          15_000,
+        ),
+      );
+      result.hostInputCleanup = { status: "passed", ...released.cleanup };
+    } catch (error) {
+      result.hostInputCleanup = { status: "failed" };
+      errors.push({ stage: "host-input-cleanup", error: String(error) });
+    }
     if (searchOpened) {
       const cleanup: Record<string, unknown> = {};
       result.cleanup = cleanup;
