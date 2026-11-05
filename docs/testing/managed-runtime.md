@@ -100,3 +100,7 @@ APK_PATH=/absolute/path/Maidong-KTV-2.1.8.apk APK_TEST_MODE=phone \
 - 用户 Mac 上下载隔离／Gatekeeper 行为、KTV 播放／录音／扫码点歌、遥控器实际焦点移动、端到端性能：未验证。
 
 [0.1.1 macOS 签名及启动](macos-0.1.1.md)已单独通过，但没有 Developer ID／Apple 公证；不能计为 0.2.0 通过。旧 TV API 31 的 ABI 安装失败及 API 36 的 CI 声卡／安装超时记录继续保留，不用新 fixture 结果替换。
+
+## 首轮 CI 反馈（保留失败）
+
+源码 `e2f359b` 已推送。[原生构建 42049512559](https://github.com/ecojust/apk-checker/actions/runs/42049512559) 在单测阶段发现 Mac 临时目录别名导致安全链接误判，以及 Windows checkout 改变许可证换行字节；本轮未生成通过验收的 0.2.0 安装包。[托管 APK 42049503832](https://github.com/ecojust/apk-checker/actions/runs/42049503832) 在宿主 KVM／显示预检失败，未进入 Android 准备或安装。后续修复结果追加记录，不覆盖本轮失败。

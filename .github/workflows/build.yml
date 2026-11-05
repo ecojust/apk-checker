@@ -76,11 +76,13 @@ jobs:
             release/portable-tools-verification.json
           if-no-files-found: error
           retention-days: 14
-      - name: Upload macOS verification diagnostics on failure
-        if: failure() && runner.os == 'macOS'
+      - name: Upload verification diagnostics on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}-diagnostics
-          path: release/mac-verification.*
+          path: |
+            release/mac-verification.*
+            release/portable-tools-verification.json
           if-no-files-found: ignore
           retention-days: 14

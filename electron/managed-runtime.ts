@@ -99,6 +99,9 @@ async function safeParents(root: string, relative: string): Promise<void> {
 
 interface ArchiveLink { name: string; target: string; hard?: boolean }
 async function installLinks(root: string, links: ArchiveLink[]): Promise<void> {
+  // The user-data path may itself contain a system symlink (macOS /var maps
+  // to /private/var). Resolve both sides of the final containment comparison.
+  const canonicalRoot = await realpath(root);
   // Link creation is delayed until all regular file writes are finished.
   for (const link of links) {
     await safeParents(root, link.name);
@@ -117,7 +120,7 @@ async function installLinks(root: string, links: ArchiveLink[]): Promise<void> {
   }
   for (const link of links) {
     const resolved = await realpath(path.join(root, link.name));
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) throw new Error("运行环境文件链接超出解压目录。");
+    if (resolved !== canonicalRoot && !resolved.startsWith(canonicalRoot + path.sep)) throw new Error("运行环境文件链接超出解压目录。");
   }
 }
 

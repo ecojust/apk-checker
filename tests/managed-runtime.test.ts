@@ -367,7 +367,15 @@ describe("managed emulator preparation", () => {
     expect(await stat(path.join(directory, "escaped")).catch(() => null)).toBeNull();
   });
 
-  it.skipIf(process.platform === "win32")("prepares tar.gz tools and preserves a safe internal library symlink", async () => {
+  it.skipIf(process.platform === "win32").each(["direct", "symlinked"])("preserves safe tar.gz library symlinks with a %s user-data root", async rootType => {
+    let userData = directory;
+    if (rootType === "symlinked") {
+      const canonicalData = path.join(directory, "canonical-user-data");
+      userData = path.join(directory, "user-data-alias");
+      await mkdir(canonicalData);
+      await symlink(canonicalData, userData, "dir");
+      manager = new ManagedRuntime(userData, resources, { platform: "linux", arch: "x64", catalog, fetch: fetcher as typeof fetch, checkDiskSpace: false });
+    }
     const source = path.join(directory, "tar-source");
     await mkdir(path.join(source, "package"), { recursive: true });
     await writeFile(path.join(source, "package", "scrcpy"), "native display");
@@ -383,7 +391,7 @@ describe("managed emulator preparation", () => {
     payloads.set(display.url, bytes);
     await manager.acceptLicense();
     await manager.prepare("phone", vi.fn());
-    expect(await readFile(path.join(directory, "managed-runtime", "scrcpy", "library"), "utf8")).toBe("library bytes");
+    expect(await readFile(path.join(userData, "managed-runtime", "scrcpy", "library"), "utf8")).toBe("library bytes");
   });
 
   it("cancels during tar extraction without an uncaught process error or leftover staging", async () => {

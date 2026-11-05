@@ -42,12 +42,15 @@ jobs:
         run: npm ci
       - name: Enable host KVM and check display service
         run: |
-          command -v xvfb-run
-          test -e /dev/kvm
+          command -v xvfb-run || { echo '::error title=Host display prerequisite::xvfb-run is missing from the hosted Linux runner'; exit 1; }
+          test -e /dev/kvm || { echo '::error title=Host virtualization prerequisite::The hosted runner has no /dev/kvm device'; exit 1; }
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          test -w /dev/kvm
+          # udev applies permissions asynchronously; wait before the assertion.
+          sudo udevadm settle --timeout=30
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm || { echo '::error title=Host virtualization prerequisite::The runner user cannot read/write /dev/kvm after configuration'; exit 1; }
       - name: Prepare installer-provided core archives
         run: npm run runtime:prepare
       - name: Download and verify original Maidong KTV release
