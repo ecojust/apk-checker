@@ -47,6 +47,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y scrcpy xvfb
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0' 'platform-tools'
+      - name: Install current scrcpy for Android 16 compatibility
+        if: inputs.target == 'tv-modern'
+        run: |
+          curl --fail --location --retry 3 \
+            'https://github.com/Genymobile/scrcpy/releases/download/v5.0.1/scrcpy-linux-x86_64-v5.0.1.tar.gz' \
+            --output "$RUNNER_TEMP/scrcpy.tar.gz"
+          printf '%s  %s\n' '9f969d30cc574816077edecda65719c1c70b0aee1df1ba5fa00779ac07b8fd6e' "$RUNNER_TEMP/scrcpy.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/scrcpy.tar.gz" -C "$RUNNER_TEMP"
+          echo "SCRCPY_PATH=$RUNNER_TEMP/scrcpy-linux-x86_64-v5.0.1/scrcpy" >> "$GITHUB_ENV"
+          echo "SCRCPY_SERVER_PATH=$RUNNER_TEMP/scrcpy-linux-x86_64-v5.0.1/scrcpy-server" >> "$GITHUB_ENV"
       - name: Download exact release APK and verify checksum
         run: |
           APK_PATH="$RUNNER_TEMP/Maidong-KTV-2.1.8.apk"
