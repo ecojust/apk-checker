@@ -180,11 +180,19 @@ describe("AndroidRuntime", () => {
     );
   });
   afterEach(async () => {
-    await runtime.dispose().catch(() => undefined);
-    Object.defineProperty(process, "platform", originalPlatform);
-    vi.useRealTimers();
-    vi.unstubAllEnvs();
-    await rm(directory, { recursive: true, force: true });
+    try {
+      // Release mocked processes even if a shutdown assertion failed before it
+      // advanced the fake clock. This keeps the next test's platform isolated.
+      if (scrcpy.exitCode === null && scrcpy.signalCode === null) {
+        scrcpy.emit("exit", 0, null);
+      }
+      await runtime.dispose().catch(() => undefined);
+    } finally {
+      Object.defineProperty(process, "platform", originalPlatform);
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("discovers newest SDK build tools numerically and lists named devices", async () => {
@@ -870,33 +878,49 @@ describe("AndroidRuntime", () => {
     expect(scrcpy.kill).not.toHaveBeenCalled();
   });
 
-  it("bounds graceful shutdown and waits for SIGTERM to finish the owned process", async () => {
-    await installIntoOwnedEmulator();
-    autoExitAfterEmulatorKill = false;
-    vi.useFakeTimers();
-    const stopping = runtime.dispose();
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(scrcpy.kill).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    await stopping;
-    expect(scrcpy.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
-  });
+  it.each(["darwin", "linux"])(
+    "bounds graceful shutdown and waits for SIGTERM on %s",
+    async (platform) => {
+      await installIntoOwnedEmulator();
+      // Tool fixtures use the native host's executable names; only the shutdown
+      // branch is mocked, after the owned process has already been created.
+      Object.defineProperty(process, "platform", { value: platform });
+      autoExitAfterEmulatorKill = false;
+      vi.useFakeTimers();
+      const stopping = runtime.dispose();
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(scrcpy.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await stopping;
+      expect(scrcpy.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+      expect(
+        processMocks.execFile.mock.calls.some((call) => call[0] === "taskkill"),
+      ).toBe(false);
+    },
+  );
 
-  it("escalates to SIGKILL only when the owned emulator ignores SIGTERM", async () => {
-    await installIntoOwnedEmulator();
-    autoExitAfterEmulatorKill = false;
-    vi.mocked(scrcpy.kill).mockImplementation((signal) => {
-      if (signal === "SIGKILL")
-        queueMicrotask(() => scrcpy.emit("exit", null, signal));
-      return true;
-    });
-    vi.useFakeTimers();
-    const stopping = runtime.dispose();
-    await vi.advanceTimersByTimeAsync(18_000);
-    await stopping;
-    expect(scrcpy.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-    expect(scrcpy.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-  });
+  it.each(["darwin", "linux"])(
+    "escalates to SIGKILL only when the owned emulator ignores SIGTERM on %s",
+    async (platform) => {
+      await installIntoOwnedEmulator();
+      Object.defineProperty(process, "platform", { value: platform });
+      autoExitAfterEmulatorKill = false;
+      vi.mocked(scrcpy.kill).mockImplementation((signal) => {
+        if (signal === "SIGKILL")
+          queueMicrotask(() => scrcpy.emit("exit", null, signal));
+        return true;
+      });
+      vi.useFakeTimers();
+      const stopping = runtime.dispose();
+      await vi.advanceTimersByTimeAsync(18_000);
+      await stopping;
+      expect(scrcpy.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+      expect(scrcpy.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+      expect(
+        processMocks.execFile.mock.calls.some((call) => call[0] === "taskkill"),
+      ).toBe(false);
+    },
+  );
 
   it("uses taskkill on the owned Windows process tree instead of killing only its launcher", async () => {
     await installIntoOwnedEmulator();
@@ -924,24 +948,40 @@ describe("AndroidRuntime", () => {
     expect(scrcpy.kill).not.toHaveBeenCalled();
   });
 
-  it("rejects disposal if owned process exit cannot be confirmed while still cleaning private adb", async () => {
-    runtime = new AndroidRuntime(undefined, {
-      ADB_SERVER_SOCKET: "tcp:localhost:24567",
-    });
-    await installIntoOwnedEmulator();
-    autoExitAfterEmulatorKill = false;
-    vi.mocked(scrcpy.kill).mockReturnValue(true);
-    vi.useFakeTimers();
-    const stopping = runtime.dispose();
-    const rejected = expect(stopping).rejects.toThrow("无法确认模拟器");
-    await vi.advanceTimersByTimeAsync(21_000);
-    await rejected;
-    expect(
-      processMocks.execFile.mock.calls.some((call) =>
-        call[1].includes("kill-server"),
-      ),
-    ).toBe(true);
-  });
+  it.each(["darwin", "linux", "win32"])(
+    "rejects unconfirmed process exit and cleans private adb on %s",
+    async (platform) => {
+      runtime = new AndroidRuntime(undefined, {
+        ADB_SERVER_SOCKET: "tcp:localhost:24567",
+      });
+      await installIntoOwnedEmulator();
+      Object.defineProperty(process, "platform", { value: platform });
+      autoExitAfterEmulatorKill = false;
+      vi.mocked(scrcpy.kill).mockReturnValue(true);
+      vi.useFakeTimers();
+      const stopping = runtime.dispose();
+      const rejected = expect(stopping).rejects.toThrow("无法确认模拟器");
+      await vi.advanceTimersByTimeAsync(21_000);
+      await rejected;
+      if (platform === "win32") {
+        expect(processMocks.execFile).toHaveBeenCalledWith(
+          "taskkill",
+          ["/PID", "12345", "/T", "/F"],
+          expect.any(Object),
+          expect.any(Function),
+        );
+        expect(scrcpy.kill).not.toHaveBeenCalled();
+      } else {
+        expect(scrcpy.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+        expect(scrcpy.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+      }
+      expect(
+        processMocks.execFile.mock.calls.some((call) =>
+          call[1].includes("kill-server"),
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("reports unexpected owned emulator exits with signal, exit code and last stderr", async () => {
     const reportError = vi.fn();

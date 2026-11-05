@@ -50,6 +50,8 @@ jobs:
         run: npm run build
       - name: Bundle verified portable emulator tools
         run: npm run runtime:prepare
+      - name: Check native portable tools before packaging
+        run: npx tsx scripts/verify-portable-tools.ts resources
       - name: Package installer with ad-hoc macOS bundle signing
         run: npx electron-builder ${{ matrix.package }} --publish never
       - name: Extract and execute packaged portable tools natively

@@ -734,7 +734,7 @@ export class AndroidRuntime {
       display.file,
       display.args,
       {
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: { ...this.environment, ADB: adb },
       },

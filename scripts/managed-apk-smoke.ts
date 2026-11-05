@@ -520,7 +520,25 @@ async function run(): Promise<void> {
     if (runtimeErrors.length)
       fail(runtimeErrors.join("\n"), "Managed runtime asynchronous failure");
     try {
-      const remaining = await privateRuntimeProcesses();
+      let remaining = await privateRuntimeProcesses();
+      report.privateProcessesImmediatelyAfterShutdown = remaining;
+      const watchdogStarted = Date.now();
+      // Android Emulator starts this 20-second kill watchdog during its normal
+      // shutdown. QEMU and all data-writing/display processes must already be
+      // gone; allow only this exact helper to exit naturally before deleting data.
+      while (
+        remaining.length > 0 &&
+        remaining.every((line) =>
+          /\/sdk\/emulator\/emulator\s+-kill\s+\d+\s+-sleep\s+20\s*$/.test(
+            line,
+          ),
+        ) &&
+        Date.now() - watchdogStarted < 25_000
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        remaining = await privateRuntimeProcesses();
+      }
+      report.privateShutdownWatchdogWaitMs = Date.now() - watchdogStarted;
       report.privateProcessesAfterShutdown = remaining;
       assert.equal(
         remaining.length,
@@ -557,6 +575,9 @@ async function run(): Promise<void> {
         deviceProperties: report.deviceProperties,
         preparationProgress: report.preparationProgress,
         privateProcessesBeforeShutdown: report.privateProcessesBeforeShutdown,
+        privateProcessesImmediatelyAfterShutdown:
+          report.privateProcessesImmediatelyAfterShutdown,
+        privateShutdownWatchdogWaitMs: report.privateShutdownWatchdogWaitMs,
         privateProcessesAfterShutdown: report.privateProcessesAfterShutdown,
         retainedPrivateDataPath: report.retainedPrivateDataPath,
       })

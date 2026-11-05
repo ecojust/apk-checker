@@ -119,3 +119,29 @@ APK_PATH=/absolute/path/Maidong-KTV-2.1.8.apk APK_TEST_MODE=phone \
 - 启动自有模拟器应用前唤醒并尝试解除普通锁屏，以符合 Android 11 音频捕获条件；没有全局关闭生产音频，CI dummy 音频仍不代表媒体播放验收。
 - Emulator 收到停止命令后等待进程真正退出，超时只终止自身进程／进程树；无法确认退出时测试保留数据，不删除活动 AVD。安装错误保留 stdout、stderr、退出码，意外模拟器退出附诊断。
 - 本地真实 Linux scrcpy 测试已确认活跃进程能实时输出日志；Mac PTY 实际子进程清理加入原生构建验证。完整显示和电视安装结果待下一轮真实托管 CI。
+
+## 0.2.1 真实手机与电视链路结果（保留整体清理失败）
+
+源码 `7ef7293` 的[托管流程 42052813767](https://github.com/ecojust/apk-checker/actions/runs/42052813767) 使用相同原版麦动 APK，在两个独立 Linux CI 主机中从全新应用目录执行。此次没有 SDK Manager、外部 SDK 路径或预建 AVD；基础工具来自随包归档，Emulator／镜像由实际 `ManagedRuntime.prepare()` 下载、校验、展开并创建私有设备。
+
+| 实际检查 | 手机 API 30 | 电视 API 36 |
+| --- | --- | --- |
+| 固定 APK 校验、内置解析、重复导入 | 通过 | 通过 |
+| 首次许可记录、运行环境准备和私有 AVD 创建 | 通过 | 通过 |
+| 自动启动私有 AVD、真实安装、持久化桌面标记 | 通过 | 通过 |
+| scrcpy 收到实际视频、APK 进程和前台入口检查 | 通过 | 通过 |
+| 方向键注入后进程存活、前台仍属于麦动 | 通过 | 通过 |
+| 卸载 APK、清除桌面标记 | 通过 | 通过 |
+| 最终所有私有进程立即为空的断言 | 失败，仅剩下述 vendor watchdog | 失败，仅剩下述 vendor watchdog |
+
+设备实际报告：
+
+- 手机：`APKChecker_Phone_30_x86_64`，Android 11，ABI 为 `x86_64,x86,arm64-v8a,armeabi-v7a,armeabi`。
+- 电视：`APKChecker_TV_36_x86_64`，Android 16，ABI 为 `x86_64,arm64-v8a`；指纹以 `google/sdk_google_atv64_x86_64/emu64xa:16/BT2A.260319.001/15058170` 开头。
+- 两组均报告 `ro.dalvik.vm.native.bridge=libndk_translation.so`。这证明本次所选 x86_64 镜像确实安装并运行了该 ARM APK；不改变旧 TV API 31/x86 的 `INSTALL_FAILED_NO_MATCHING_ABIS` 结论，也不代表所有镜像或目标主机都兼容。
+
+此次 QEMU、netsimd、crashpad、scrcpy 和私有 adb 均已退出。清理断言捕捉到 Android Emulator 正常关停时启动的短暂辅助进程：`emulator -kill <已退出 QEMU 的 PID> -sleep 20`。测试因此保留私有数据并以失败结束，**整轮工作流仍为失败，不能标为全部通过**；通过的运行步骤来自 CI 最终 `Managed phone/tv test stages` annotation 中逐项记录的实际执行结果。
+
+测试修正仅允许这一精确参数形式的 watchdog 最多 25 秒自然结束，其他残留进程仍立即失败；等待后仍要求所有私有进程严格为空，再删除测试数据。报告记录即时进程列表、watchdog 等待时间和最终进程列表；关停不确认时继续保留数据。该修正不改产品关停实现，也不放宽安装、视频或前台检查，后续工作流结果需另行追加。
+
+本次只验证 Linux CI 下的应用后端和 Android 视频窗口链路；未验证 Mac／Windows 上实际 APK 运行、每个方向键对应的焦点移动、歌曲播放、录音或音频延迟。CI dummy 音频设备不作为真实音频能力的证据。

@@ -3,7 +3,7 @@ import { createConnection } from "node:net";
 import { AndroidRuntime } from "../electron/android";
 import { displayCommand } from "../electron/display";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -30,19 +30,37 @@ function listening(port: number): Promise<boolean> {
 
 async function verifyLiveLogs(executable: string, env: NodeJS.ProcessEnv): Promise<void> {
   if (process.platform === "win32") return;
-  const invocation = displayCommand(executable, ["--pause-on-exit=true", "--apk-checker-test-invalid-option"]);
-  const child = spawn(invocation.file, invocation.args, { env, stdio: ["pipe", "pipe", "pipe"] });
+  let probeDirectory: string | undefined;
+  let probe = executable;
+  let args = ["--pause-on-exit=true", "--apk-checker-test-invalid-option"];
+  let marker = "scrcpy 5.0.1";
+  if (process.platform === "darwin") {
+    // Node's pipe is a socketpair: BSD script rejects its terminal ioctl.
+    // Production uses /dev/null stdin. Verify that exact setup using a native
+    // libc stdout writer which deliberately never fflush()es and never reads stdin.
+    probeDirectory = await mkdtemp(path.join(tmpdir(), "apk-checker-pty-probe-"));
+    const source = path.join(probeDirectory, "probe.c");
+    probe = path.join(probeDirectory, "probe");
+    marker = "APK_CHECKER_LIVE_PTY";
+    await writeFile(source, '#include <stdio.h>\n#include <unistd.h>\nint main(void) { puts("APK_CHECKER_LIVE_PTY"); sleep(60); return 0; }\n');
+    await promisify(execFile)("/usr/bin/cc", ["-Wall", "-Werror", source, "-o", probe]);
+    args = [];
+  }
+  const invocation = displayCommand(probe, args);
+  const child = spawn(invocation.file, invocation.args, { env, stdio: [process.platform === "darwin" ? "ignore" : "pipe", "pipe", "pipe"] });
   let descendants: number[] = [];
   try {
     await new Promise<void>((resolve, reject) => {
       let output = "";
+      let errors = "";
+      child.stderr?.on("data", data => { errors = (errors + String(data)).slice(-4000); });
       const timer = setTimeout(() => reject(new Error("Live scrcpy stdout was buffered until exit")), 10000);
-      child.stdout.on("data", data => {
+      child.stdout!.on("data", data => {
         output += String(data);
-        if (output.includes("scrcpy 5.0.1")) { clearTimeout(timer); resolve(); }
+        if (output.includes(marker)) { clearTimeout(timer); resolve(); }
       });
       child.once("error", error => { clearTimeout(timer); reject(error); });
-      child.once("exit", () => { clearTimeout(timer); reject(new Error("Probe exited before live logs were confirmed")); });
+      child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`Probe exited before live logs: code=${code} signal=${signal}; ${errors} ${output}`)); });
     });
     await new Promise(resolve => setTimeout(resolve, 250));
     assert.equal(child.exitCode, null, "The real scrcpy probe must remain alive after logs arrive");
@@ -59,7 +77,7 @@ async function verifyLiveLogs(executable: string, env: NodeJS.ProcessEnv): Promi
       child.once("exit", () => { clearTimeout(timer); resolve(); });
     });
     child.kill();
-    child.stdin.destroy();
+    child.stdin?.destroy();
     await exited;
     for (const pid of descendants) {
       let alive = true;
@@ -71,10 +89,12 @@ async function verifyLiveLogs(executable: string, env: NodeJS.ProcessEnv): Promi
       if (alive) { try { process.kill(pid, "SIGKILL"); } catch { /* Already exited. */ } }
       assert.equal(alive, false, "The owned PTY display child must exit with its wrapper");
     }
+    if (probeDirectory) await rm(probeDirectory, { recursive: true, force: true });
   }
 }
 
 async function main() {
+  await mkdir("release", { recursive: true });
   const report: Record<string, unknown> = {
     platform: process.platform, arch: process.arch,
     scope: "Packaged portable tools extracted by ManagedRuntime and executed natively; no Android boot or media test",
@@ -110,7 +130,10 @@ async function main() {
     assert.match(versions[1].output, /scrcpy 5\.0\.1/);
     report.versions = versions;
     await verifyLiveLogs(settings.scrcpyPath, { ...process.env, ...managed.getEnvironment() });
-    if (process.platform !== "win32") report.displayLogStreamingVerified = true;
+    if (process.platform !== "win32") {
+      report.displayLogStreamingVerified = true;
+      report.displayLogProbe = process.platform === "darwin" ? "Native unflushed libc writer via production BSD PTY and /dev/null stdin; child exit verified" : "Real scrcpy with line buffering and an open pause-on-exit stdin";
+    }
     else report.displayLogStreamingCheck = "Unix-only probe; the upstream Windows binary disables stdout buffering";
     const environment = managed.getEnvironment();
     const port = Number(environment.ANDROID_ADB_SERVER_PORT);
