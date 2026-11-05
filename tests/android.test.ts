@@ -10,6 +10,7 @@ import {
   parseResolvedActivity,
   validatePackageName,
 } from "../electron/android";
+import { displayCommand } from "../electron/display";
 import type { LibraryApp, Settings } from "../src/shared/types";
 
 const processMocks = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
@@ -34,7 +35,21 @@ function fakeChild(): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
   child.stdout = new EventEmitter() as ChildProcess["stdout"];
-  child.kill = vi.fn(() => true);
+  let exitCode: number | null = null;
+  let signalCode: NodeJS.Signals | null = null;
+  Object.defineProperties(child, {
+    pid: { value: 12345 },
+    exitCode: { get: () => exitCode },
+    signalCode: { get: () => signalCode },
+  });
+  child.on("exit", (code, signal) => {
+    exitCode = code;
+    signalCode = signal || null;
+  });
+  child.kill = vi.fn((signal: NodeJS.Signals | number = "SIGTERM") => {
+    queueMicrotask(() => child.emit("exit", null, signal));
+    return true;
+  });
   return child;
 }
 
@@ -86,11 +101,17 @@ describe("AndroidRuntime", () => {
   let apkPath: string;
   let scrcpy: ChildProcess;
   let output: (args: string[]) => string;
+  let autoExitAfterEmulatorKill: boolean;
+  const originalPlatform = Object.getOwnPropertyDescriptor(
+    process,
+    "platform",
+  )!;
   const exe = (name: string) =>
     process.platform === "win32" ? `${name}.exe` : name;
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    autoExitAfterEmulatorKill = true;
     directory = await mkdtemp(join(tmpdir(), "apk checker runtime "));
     settings = {
       sdkPath: join(directory, "sdk"),
@@ -148,11 +169,19 @@ describe("AndroidRuntime", () => {
         callback: (error: Error | null, stdout: string, stderr: string) => void,
       ) => {
         callback(null, output(args), "");
+        if (
+          autoExitAfterEmulatorKill &&
+          args.includes("emu") &&
+          args.includes("kill")
+        ) {
+          queueMicrotask(() => scrcpy.emit("exit", 0, null));
+        }
       },
     );
   });
   afterEach(async () => {
-    await runtime.dispose();
+    await runtime.dispose().catch(() => undefined);
+    Object.defineProperty(process, "platform", originalPlatform);
     vi.useRealTimers();
     vi.unstubAllEnvs();
     await rm(directory, { recursive: true, force: true });
@@ -307,13 +336,13 @@ describe("AndroidRuntime", () => {
       expect.any(Function),
     );
     expect(processMocks.spawn).toHaveBeenCalledWith(
-      settings.scrcpyPath,
-      [
+      displayCommand(settings.scrcpyPath, []).file,
+      expect.arrayContaining([
         "--serial",
         "emulator-5556",
         "--window-title",
         "示例应用 · 电视模式 · APK Checker",
-      ],
+      ]),
       expect.objectContaining({
         env: expect.objectContaining({
           ADB: join(settings.sdkPath, "platform-tools", exe("adb")),
@@ -522,7 +551,7 @@ describe("AndroidRuntime", () => {
     expect(secondWindow.kill).not.toHaveBeenCalled();
     expect(
       processMocks.spawn.mock.calls.every(
-        (call) => call[0] === settings.scrcpyPath,
+        (call) => call[0] === displayCommand(settings.scrcpyPath, []).file,
       ),
     ).toBe(true);
     runtime.dispose();
@@ -705,7 +734,7 @@ describe("AndroidRuntime", () => {
     runtime = new AndroidRuntime(undefined, overrides);
     await runtime.launch(app, "phone", settings, vi.fn());
     expect(processMocks.spawn).toHaveBeenCalledWith(
-      settings.scrcpyPath,
+      displayCommand(settings.scrcpyPath, []).file,
       expect.arrayContaining(["--serial", "emulator-5554"]),
       expect.objectContaining({
         env: expect.objectContaining({
@@ -794,5 +823,197 @@ describe("AndroidRuntime", () => {
     await runtime.dispose();
     await runtime.getStatus(settings);
     expect(processMocks.execFile).not.toHaveBeenCalled();
+  });
+  async function installIntoOwnedEmulator(): Promise<void> {
+    const normal = output;
+    output = (args) =>
+      args[0] === "devices"
+        ? ""
+        : args.includes("emu")
+          ? "Phone_API_35\nOK\n"
+          : normal(args);
+    await runtime.install(app, apkPath, "phone", settings, vi.fn());
+  }
+
+  it("waits for QEMU exit after console acknowledgement before shutting down private adb", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      ADB_SERVER_SOCKET: "tcp:localhost:24567",
+    });
+    await installIntoOwnedEmulator();
+    autoExitAfterEmulatorKill = false;
+    let finished = false;
+    const stopping = runtime.dispose().then(() => {
+      finished = true;
+    });
+    await vi.waitFor(() =>
+      expect(
+        processMocks.execFile.mock.calls.some((call) =>
+          call[1].includes("kill"),
+        ),
+      ).toBe(true),
+    );
+    expect(finished).toBe(false);
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("kill-server"),
+      ),
+    ).toBe(false);
+    expect(scrcpy.kill).not.toHaveBeenCalled();
+    scrcpy.emit("exit", 0, null);
+    await stopping;
+    expect(finished).toBe(true);
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("kill-server"),
+      ),
+    ).toBe(true);
+    expect(scrcpy.kill).not.toHaveBeenCalled();
+  });
+
+  it("bounds graceful shutdown and waits for SIGTERM to finish the owned process", async () => {
+    await installIntoOwnedEmulator();
+    autoExitAfterEmulatorKill = false;
+    vi.useFakeTimers();
+    const stopping = runtime.dispose();
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(scrcpy.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await stopping;
+    expect(scrcpy.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+  });
+
+  it("escalates to SIGKILL only when the owned emulator ignores SIGTERM", async () => {
+    await installIntoOwnedEmulator();
+    autoExitAfterEmulatorKill = false;
+    vi.mocked(scrcpy.kill).mockImplementation((signal) => {
+      if (signal === "SIGKILL")
+        queueMicrotask(() => scrcpy.emit("exit", null, signal));
+      return true;
+    });
+    vi.useFakeTimers();
+    const stopping = runtime.dispose();
+    await vi.advanceTimersByTimeAsync(18_000);
+    await stopping;
+    expect(scrcpy.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(scrcpy.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+  });
+
+  it("uses taskkill on the owned Windows process tree instead of killing only its launcher", async () => {
+    await installIntoOwnedEmulator();
+    autoExitAfterEmulatorKill = false;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const normalExec = processMocks.execFile.getMockImplementation()!;
+    processMocks.execFile.mockImplementation(
+      (file, args, options, callback) => {
+        if (file === "taskkill") {
+          callback(null, "SUCCESS", "");
+          queueMicrotask(() => scrcpy.emit("exit", 1, null));
+        } else normalExec(file, args, options, callback);
+      },
+    );
+    vi.useFakeTimers();
+    const stopping = runtime.dispose();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await stopping;
+    expect(processMocks.execFile).toHaveBeenCalledWith(
+      "taskkill",
+      ["/PID", "12345", "/T", "/F"],
+      expect.objectContaining({ timeout: 3000 }),
+      expect.any(Function),
+    );
+    expect(scrcpy.kill).not.toHaveBeenCalled();
+  });
+
+  it("rejects disposal if owned process exit cannot be confirmed while still cleaning private adb", async () => {
+    runtime = new AndroidRuntime(undefined, {
+      ADB_SERVER_SOCKET: "tcp:localhost:24567",
+    });
+    await installIntoOwnedEmulator();
+    autoExitAfterEmulatorKill = false;
+    vi.mocked(scrcpy.kill).mockReturnValue(true);
+    vi.useFakeTimers();
+    const stopping = runtime.dispose();
+    const rejected = expect(stopping).rejects.toThrow("无法确认模拟器");
+    await vi.advanceTimersByTimeAsync(21_000);
+    await rejected;
+    expect(
+      processMocks.execFile.mock.calls.some((call) =>
+        call[1].includes("kill-server"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports unexpected owned emulator exits with signal, exit code and last stderr", async () => {
+    const reportError = vi.fn();
+    runtime = new AndroidRuntime(reportError);
+    await installIntoOwnedEmulator();
+    scrcpy.stderr?.emit("data", Buffer.from("QEMU fatal diagnostic"));
+    scrcpy.emit("exit", 137, "SIGKILL");
+    expect(reportError).toHaveBeenCalledOnce();
+    expect(reportError).toHaveBeenCalledWith(
+      expect.stringContaining("Phone_API_35"),
+    );
+    expect(reportError.mock.calls[0][0]).toContain("137");
+    expect(reportError.mock.calls[0][0]).toContain("SIGKILL");
+    expect(reportError.mock.calls[0][0]).toContain("QEMU fatal diagnostic");
+  });
+
+  it("does not report normal emulator exit or an intentional shutdown as a crash", async () => {
+    const reportError = vi.fn();
+    runtime = new AndroidRuntime(reportError);
+    await installIntoOwnedEmulator();
+    await runtime.dispose();
+    expect(reportError).not.toHaveBeenCalled();
+    runtime = new AndroidRuntime(reportError);
+    scrcpy = fakeChild();
+    await installIntoOwnedEmulator();
+    scrcpy.emit("exit", 0, null);
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("retains the adb install error from stdout together with stderr and exit diagnostics", async () => {
+    processMocks.execFile.mockImplementation(
+      (_file, args, _options, callback) => {
+        if (args.includes("install")) {
+          const error = Object.assign(new Error("install command failed"), {
+            code: 1,
+            signal: "SIGTERM",
+            killed: true,
+          });
+          callback(
+            error,
+            "Failure [INSTALL_FAILED_TEST_DIAGNOSTIC]",
+            `${"verbose\n".repeat(1000)}adb: failed to install /tmp/app.apk:`,
+          );
+        } else callback(null, output(args), "");
+      },
+    );
+    let error: Error | undefined;
+    try {
+      await runtime.install(app, apkPath, "tv", settings, vi.fn());
+    } catch (caught) {
+      error = caught as Error;
+    }
+    expect(error?.message).toContain("INSTALL_FAILED_TEST_DIAGNOSTIC");
+    expect(error?.message).toContain("adb: failed to install /tmp/app.apk:");
+    expect(error?.message).toContain("退出代码：1");
+    expect(error?.message).toContain("SIGTERM");
+    expect(error?.message).toContain("被终止或执行超时");
+    expect(error!.message.length).toBeLessThan(8000);
+  });
+
+  it("keeps process launch errors when neither stdout nor stderr is available", async () => {
+    processMocks.execFile.mockImplementation(
+      (_file, _args, _options, callback) => {
+        callback(
+          Object.assign(new Error("spawn adb ENOENT"), { code: "ENOENT" }),
+          "",
+          "",
+        );
+      },
+    );
+    const status = await runtime.getStatus(settings);
+    expect(status.issues.join("\n")).toContain("spawn adb ENOENT");
+    expect(status.issues.join("\n")).toContain("退出代码：ENOENT");
   });
 });

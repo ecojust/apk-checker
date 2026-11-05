@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { displayCommand, hasVideoTexture } from "./display";
 import type {
   DeviceMode,
   LibraryApp,
@@ -63,15 +64,46 @@ function run(
       },
       (error, stdout, stderr) => {
         if (error) {
-          const details = String(stderr || stdout || error.message)
-            .trim()
-            .slice(-3000);
-          reject(
-            new Error(error.killed ? `命令执行超时：${details}` : details),
-          );
+          // adb can put a generic prefix on stderr and the actual install error
+          // on stdout. Keep a bounded tail from each instead of discarding one.
+          const details = [
+            stdout.trim() && `stdout:\n${stdout.trim().slice(-3000)}`,
+            stderr.trim() && `stderr:\n${stderr.trim().slice(-3000)}`,
+            error.code !== undefined && error.code !== null
+              ? `退出代码：${error.code}`
+              : "",
+            error.signal ? `信号：${error.signal}` : "",
+            error.message ? error.message.slice(-1500) : "",
+          ].filter(Boolean).join("\n");
+          reject(new Error(
+            `${error.killed ? "命令被终止或执行超时：" : ""}${details || "命令执行失败，未返回诊断信息。"}`,
+          ));
         } else resolveOutput(stdout);
       },
     );
+  });
+}
+
+function childHasExited(child: ChildProcess): boolean {
+  return child.pid === undefined ||
+    child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForChildExit(
+  child: ChildProcess,
+  timeout: number,
+): Promise<boolean> {
+  if (childHasExited(child)) return Promise.resolve(true);
+  return new Promise((resolveExit) => {
+    const finish = (exited: boolean) => {
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      resolveExit(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeout);
+    child.once("exit", onExit);
+    if (childHasExited(child)) finish(true);
   });
 }
 
@@ -512,11 +544,24 @@ export class AndroidRuntime {
       child.on("error", (error) => {
         processError = error.message;
         exited = true;
-        this.ownedEmulators.delete(avd);
+        if (this.ownedEmulators.get(avd)?.child === child) {
+          this.ownedEmulators.delete(avd);
+        }
       });
-      child.on("exit", () => {
+      child.on("exit", (code, signal) => {
         exited = true;
-        this.ownedEmulators.delete(avd);
+        const stillOwned = this.ownedEmulators.get(avd)?.child === child;
+        if (stillOwned) this.ownedEmulators.delete(avd);
+        processError = [
+          `退出代码：${code ?? "无"}${signal ? `，信号：${signal}` : ""}`,
+          processError,
+        ].filter(Boolean).join("\n");
+        if (
+          stillOwned && !this.disposed &&
+          (signal || (code !== null && code !== 0))
+        ) {
+          this.onRuntimeError?.(`模拟器「${avd}」意外退出：${processError}`);
+        }
       });
     } else progress(`正在连接虚拟设备「${avd}」…`);
     const deadline = Date.now() + BOOT_TIMEOUT;
@@ -620,6 +665,10 @@ export class AndroidRuntime {
           : "未找到 scrcpy。请先安装 scrcpy，并在运行环境中设置可执行文件路径。",
       );
     const { adb, serial } = await this.ensureDevice(settings, mode, onProgress);
+    // Android 11 audio capture requires an unlocked foreground screen. These
+    // commands affect only the explicitly selected emulator and cannot unlock a PIN.
+    await this.run(adb, ["-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP"]).catch(() => undefined);
+    await this.run(adb, ["-s", serial, "shell", "wm", "dismiss-keyguard"]).catch(() => undefined);
     const category =
       mode === "tv"
         ? "android.intent.category.LEANBACK_LAUNCHER"
@@ -675,16 +724,17 @@ export class AndroidRuntime {
       this.windows.delete(serial);
       previous.kill();
     }
-    const child = spawn(
-      scrcpy,
-      [
+    const display = displayCommand(scrcpy, [
         "--serial",
         serial,
         "--window-title",
         `${app.name} · ${mode === "phone" ? "手机模式" : "电视模式"} · APK Checker`,
-      ],
+      ]);
+    const child = spawn(
+      display.file,
+      display.args,
       {
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         env: { ...this.environment, ADB: adb },
       },
@@ -709,7 +759,7 @@ export class AndroidRuntime {
         diagnostics = (diagnostics + String(data)).slice(-4000);
         if (
           !settled &&
-          /(?:initial\s+)?texture:\s*\d+x\d+/i.test(diagnostics)
+          hasVideoTexture(diagnostics)
         ) {
           settled = true;
           started = true;
@@ -776,6 +826,8 @@ export class AndroidRuntime {
   }
 
   private async stopEmulator(owned: OwnedEmulator): Promise<void> {
+    if (childHasExited(owned.child)) return;
+    let gracefulShutdown = false;
     // Verify the AVD identity before issuing a shutdown: never stop an externally owned device.
     try {
       const name = await this.run(
@@ -796,25 +848,35 @@ export class AndroidRuntime {
           3000,
           true,
         );
-        return;
+        gracefulShutdown = true;
       }
     } catch {
       /* A booting / failed emulator may not expose its console yet. */
     }
+    // The console acknowledgement precedes snapshot writes and process exit.
+    // Keep the directory and private ADB server alive until QEMU has stopped.
+    if (gracefulShutdown && await waitForChildExit(owned.child, 15_000)) return;
+    if (childHasExited(owned.child)) return;
     // Windows emulator.exe launches QEMU; terminating only the launcher leaves QEMU running.
-    if (
-      process.platform === "win32" &&
-      owned.child.pid &&
-      owned.child.exitCode === null
-    ) {
+    const windowsProcessTree = process.platform === "win32" && owned.child.pid;
+    if (windowsProcessTree) {
       await this.run(
         "taskkill",
         ["/PID", String(owned.child.pid), "/T", "/F"],
         3000,
         true,
       ).catch(() => undefined);
+    } else {
+      owned.child.kill("SIGTERM");
     }
-    owned.child.kill();
+    if (await waitForChildExit(owned.child, 3000)) return;
+    if (!windowsProcessTree) {
+      owned.child.kill("SIGKILL");
+      if (await waitForChildExit(owned.child, 3000)) return;
+    }
+    throw new Error(
+      `无法确认模拟器「${owned.avd}」已经关闭，已保留运行环境数据，请关闭该进程后重试。`,
+    );
   }
 
   dispose(): Promise<void> {
@@ -824,15 +886,17 @@ export class AndroidRuntime {
     this.windows.clear();
     const owned = [...this.ownedEmulators.values()];
     this.ownedEmulators.clear();
-    this.disposal = Promise.all(
+    this.disposal = Promise.allSettled(
       owned.map((emulator) => this.stopEmulator(emulator)),
-    ).then(async () => {
+    ).then(async (results) => {
       if (this.privateAdbSocket && this.usedPrivateAdb) {
         // Use the exact binary and private environment previously invoked here.
         await this.run(this.usedPrivateAdb, ["kill-server"], 3000, true).catch(
           () => undefined,
         );
       }
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
     });
     return this.disposal;
   }

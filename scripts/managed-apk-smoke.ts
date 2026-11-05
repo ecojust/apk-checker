@@ -174,6 +174,46 @@ async function foreground(): Promise<unknown> {
   return { pid, resumedActivities: resumed };
 }
 
+async function privateRuntimeProcesses(): Promise<string[]> {
+  if (process.platform !== "linux" || !root) return [];
+  const output = await command("ps", ["-eo", "pid=,ppid=,args="]);
+  return output
+    .split(/\r?\n/)
+    .filter(
+      (line) =>
+        line.includes(root + path.sep) &&
+        /(?:sdk\/emulator|platform-tools|scrcpy)/.test(line),
+    );
+}
+
+async function hostDiagnostics(): Promise<void> {
+  if (process.platform !== "linux" || !root) return;
+  const results = await Promise.allSettled([
+    command("free", ["-h"]),
+    command("df", ["-h", root]),
+    command("sudo", ["-n", "dmesg", "--color=never"]),
+  ]);
+  const output = results
+    .map((result, index) => {
+      let contents =
+        result.status === "fulfilled" ? result.value : String(result.reason);
+      if (index === 2 && result.status === "fulfilled")
+        contents = contents
+          .split(/\r?\n/)
+          .filter((line) => /oom|out of memory|killed process|qemu/i.test(line))
+          .slice(-100)
+          .join("\n");
+      return (
+        ["Memory", "Disk", "Kernel OOM/QEMU diagnostics"][index] +
+        "\n" +
+        contents
+      );
+    })
+    .join("\n\n");
+  await writeFile(path.join(artifacts, "host-diagnostics.txt"), output);
+  report.privateProcessesBeforeShutdown = await privateRuntimeProcesses();
+}
+
 async function run(): Promise<void> {
   await mkdir(artifacts, { recursive: true });
   try {
@@ -465,24 +505,67 @@ async function run(): Promise<void> {
         fail(error, "Managed APK cleanup");
       }
     }
-    await runtime
-      ?.dispose()
-      .catch((error) => fail(error, "Managed runtime shutdown"));
-    await manager
-      ?.dispose()
-      .catch((error) => fail(error, "Managed preparation shutdown"));
+    await hostDiagnostics().catch((error) => {
+      report.hostDiagnosticsError = String(error);
+    });
+    let shutdownConfirmed = true;
+    await runtime?.dispose().catch((error) => {
+      shutdownConfirmed = false;
+      fail(error, "Managed runtime shutdown");
+    });
+    await manager?.dispose().catch((error) => {
+      shutdownConfirmed = false;
+      fail(error, "Managed preparation shutdown");
+    });
     if (runtimeErrors.length)
-      fail(runtimeErrors.join("\n"), "Managed video window failure");
-    if (root)
-      await rm(root, { recursive: true, force: true }).catch((error) =>
-        fail(error, "Private test data cleanup"),
+      fail(runtimeErrors.join("\n"), "Managed runtime asynchronous failure");
+    try {
+      const remaining = await privateRuntimeProcesses();
+      report.privateProcessesAfterShutdown = remaining;
+      assert.equal(
+        remaining.length,
+        0,
+        `dispose returned with private Android processes still alive: ${remaining.join("; ")}`,
       );
+    } catch (error) {
+      shutdownConfirmed = false;
+      fail(error, "Private runtime process cleanup");
+    }
+    if (root && !shutdownConfirmed) report.retainedPrivateDataPath = root;
+    if (root && shutdownConfirmed)
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 1000,
+      }).catch((error) => fail(error, "Private test data cleanup"));
     report.completedAt = new Date().toISOString();
     await writeFile(
       path.join(artifacts, "summary.json"),
       JSON.stringify(report, null, 2),
     );
     console.log(JSON.stringify(report, null, 2));
+    if (process.env.GITHUB_ACTIONS) {
+      // Keep concise evidence accessible through the checks API when artifact
+      // blob downloads are unavailable to a reviewer. No environment secrets.
+      const diagnostic = JSON.stringify({
+        status: report.status,
+        steps: (
+          report.steps as { name: string; status: string; durationMs: number }[]
+        ).map(({ name, status, durationMs }) => ({ name, status, durationMs })),
+        runtime: report.runtime,
+        deviceProperties: report.deviceProperties,
+        preparationProgress: report.preparationProgress,
+        privateProcessesBeforeShutdown: report.privateProcessesBeforeShutdown,
+        privateProcessesAfterShutdown: report.privateProcessesAfterShutdown,
+        retainedPrivateDataPath: report.retainedPrivateDataPath,
+      })
+        .slice(0, 8000)
+        .replaceAll("%", "%25")
+        .replaceAll("\r", "%0D")
+        .replaceAll("\n", "%0A");
+      console.log(`::notice title=Managed ${mode} test stages::${diagnostic}`);
+    }
   }
 }
 void run().catch((error) => {

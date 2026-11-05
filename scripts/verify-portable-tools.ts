@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createConnection } from "node:net";
 import { AndroidRuntime } from "../electron/android";
-import { execFile } from "node:child_process";
+import { displayCommand } from "../electron/display";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -25,6 +26,50 @@ function listening(port: number): Promise<boolean> {
     socket.once("error", () => finish(false));
     socket.setTimeout(1000, () => finish(false));
   });
+}
+
+async function verifyLiveLogs(executable: string, env: NodeJS.ProcessEnv): Promise<void> {
+  if (process.platform === "win32") return;
+  const invocation = displayCommand(executable, ["--pause-on-exit=always", "--apk-checker-test-invalid-option"]);
+  const child = spawn(invocation.file, invocation.args, { env, stdio: ["pipe", "pipe", "pipe"] });
+  let descendants: number[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let output = "";
+      const timer = setTimeout(() => reject(new Error("Live scrcpy stdout was buffered until exit")), 10000);
+      child.stdout.on("data", data => {
+        output += String(data);
+        if (output.includes("scrcpy 5.0.1")) { clearTimeout(timer); resolve(); }
+      });
+      child.once("error", error => { clearTimeout(timer); reject(error); });
+      child.once("exit", () => { clearTimeout(timer); reject(new Error("Probe exited before live logs were confirmed")); });
+    });
+    assert.equal(child.exitCode, null, "The real scrcpy probe must still be alive when logs arrive");
+    if (process.platform === "darwin") {
+      const result = await promisify(execFile)("/usr/bin/pgrep", ["-P", String(child.pid)]);
+      descendants = result.stdout.trim().split(/\s+/).map(Number);
+      assert(descendants.length > 0 && descendants.every(pid => Number.isInteger(pid) && pid > 1));
+    }
+  } finally {
+    const exited = new Promise<void>((resolve, reject) => {
+      if (child.exitCode !== null || child.signalCode) return resolve();
+      const timer = setTimeout(() => reject(new Error("Display probe did not exit after termination")), 5000);
+      child.once("exit", () => { clearTimeout(timer); resolve(); });
+    });
+    child.kill();
+    child.stdin.destroy();
+    await exited;
+    for (const pid of descendants) {
+      let alive = true;
+      const deadline = Date.now() + 5000;
+      while (alive && Date.now() < deadline) {
+        try { process.kill(pid, 0); } catch { alive = false; }
+        if (alive) await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (alive) { try { process.kill(pid, "SIGKILL"); } catch { /* Already exited. */ } }
+      assert.equal(alive, false, "The owned PTY display child must exit with its wrapper");
+    }
+  }
 }
 
 async function main() {
@@ -62,6 +107,9 @@ async function main() {
     assert.match(versions[0].output, /Android Debug Bridge/);
     assert.match(versions[1].output, /scrcpy 5\.0\.1/);
     report.versions = versions;
+    await verifyLiveLogs(settings.scrcpyPath, { ...process.env, ...managed.getEnvironment() });
+    if (process.platform !== "win32") report.displayLogStreamingVerified = true;
+    else report.displayLogStreamingCheck = "Unix-only probe; the upstream Windows binary disables stdout buffering";
     const environment = managed.getEnvironment();
     const port = Number(environment.ANDROID_ADB_SERVER_PORT);
     assert.notEqual(port, 5037);

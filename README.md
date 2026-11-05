@@ -2,14 +2,14 @@
 
 用于管理和运行 Android APK 的桌面应用，面向 **macOS Apple Silicon、macOS Intel 和 Windows x64**。导入后在软件库选择手机或电视模式安装；安装成功的应用显示在对应桌面，点击即可打开独立显示窗口。
 
-**0.2.0 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
+**0.2.1 无需安装 Android Studio、Java、aapt / aapt2，也无需配置 SDK、scrcpy 路径或手动创建虚拟设备。** APK 解析使用随应用内置的 JavaScript 模块，导入可完全离线进行。构建时将内部通信组件 Platform-Tools 和显示组件 scrcpy 随包提供；Android 模拟器引擎及所选系统镜像在首次使用时自动下载、校验并保存，完成后可离线启动。
 
 界面使用 Electron + React，Android 运行由 Emulator 提供。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
 
 ## 首次使用
 
 1. 打开客户端，点击「导入 APK」，可同时选择多个 `.apk`。无需先准备模拟器。
-2. 在软件库选择手机或电视模式并点击安装，也可先到「运行环境」准备对应模式。
+2. 在软件库选择手机或电视模式并点击安装，也可先到「模拟器设置」准备对应模式。
 3. 首次准备时阅读许可条款并勾选同意。客户端显示预计下载量，自动准备所需文件和虚拟设备；下载可取消并重试，部分下载支持续传。
 4. 等待真实安装成功，切换到「桌面」，点击应用打开显示窗口。失败时会保留错误信息，不会将应用标记为已安装。
 5. 电视模式可使用方向键、Enter 和返回键；完整快捷键见 [scrcpy 控制文档](https://github.com/Genymobile/scrcpy/blob/master/doc/control.md)。

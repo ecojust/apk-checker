@@ -1,4 +1,4 @@
-# 0.2.0 内置解析与自动运行环境验证
+# 0.2.x 内置解析与自动运行环境验证
 
 本记录对应 2026-11-05 的 0.2.0 自动环境实现。它区分源码功能、fixture 验证、真实归档检查和真实 Android 运行；新版本的提交及 CI 结果应继续追加，不能继承 0.1.1 的验收结论。
 
@@ -104,3 +104,18 @@ APK_PATH=/absolute/path/Maidong-KTV-2.1.8.apk APK_TEST_MODE=phone \
 ## 首轮 CI 反馈（保留失败）
 
 源码 `e2f359b` 已推送。[原生构建 42049512559](https://github.com/ecojust/apk-checker/actions/runs/42049512559) 在单测阶段发现 Mac 临时目录别名导致安全链接误判，以及 Windows checkout 改变许可证换行字节；本轮未生成通过验收的 0.2.0 安装包。[托管 APK 42049503832](https://github.com/ecojust/apk-checker/actions/runs/42049503832) 在宿主 KVM／显示预检失败，未进入 Android 准备或安装。后续修复结果追加记录，不覆盖本轮失败。
+
+## 0.2.0 原生验收与真实托管运行
+
+源码 `01a217b` 的[构建 42050053204](https://github.com/ecojust/apk-checker/actions/runs/42050053204) 三平台全部通过。两种 Mac 均通过 DMG 严格签名、实际应用启动、IPC、资源 SHA 校验和真实基础工具执行；Windows 通过资源及基础工具执行。三平台均实际验证私有 adb 自动启动及退出清理，Windows 未额外声称 Electron 界面启动。
+
+安装包：[ARM Mac](https://github.com/ecojust/apk-checker/actions/runs/42050053204/artifacts/13426895715)、[Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42050053204/artifacts/13427165677)、[Windows](https://github.com/ecojust/apk-checker/actions/runs/42050053204/artifacts/13425772954)。这是 0.2.0 构建，不代表下面发现的显示／关停问题已经修复；更新补丁另行标明。
+
+[托管流程 42050039215](https://github.com/ecojust/apk-checker/actions/runs/42050039215) 两组完成程序自身下载、校验、展开及自动创建／启动 AVD。手机组真实安装并发出成功启动，随后等待显示窗口视频日志超时；电视组在安装时失去有效设备，原诊断只保留 stderr 前缀，未取得明确兼容性错误，不能断言 ABI 不匹配。两组清理又在 QEMU 保存快照时删除临时目录，出现 ENOTEMPTY；本轮整体失败。
+
+0.2.1 修复及补测范围：
+
+- 官方 scrcpy 5.0.1 在 Unix 管道中缓冲 INFO 输出，硬件解码还会输出 `Texture (VideoToolbox/D3D11VA/VA-API)`；原等待逻辑会误判。Mac 使用系统 BSD `script` 提供 PTY，Linux 用 coreutils `stdbuf`，Windows 保持原生取消缓冲行为；扩展合法视频日志匹配，仍不把仅启动进程当作视频成功。
+- 启动自有模拟器应用前唤醒并尝试解除普通锁屏，以符合 Android 11 音频捕获条件；没有全局关闭生产音频，CI dummy 音频仍不代表媒体播放验收。
+- Emulator 收到停止命令后等待进程真正退出，超时只终止自身进程／进程树；无法确认退出时测试保留数据，不删除活动 AVD。安装错误保留 stdout、stderr、退出码，意外模拟器退出附诊断。
+- 本地真实 Linux scrcpy 测试已确认活跃进程能实时输出日志；Mac PTY 实际子进程清理加入原生构建验证。完整显示和电视安装结果待下一轮真实托管 CI。
