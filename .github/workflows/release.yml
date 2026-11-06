@@ -1,0 +1,67 @@
+name: Prepare verified draft release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build desktop apps run containing all three installers
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: apk-checker-draft-release
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      RELEASE_WORK_DIR: ${{ runner.temp }}/apk-checker-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate build provenance and production source
+        id: source
+        run: node scripts/stage-release.mjs validate
+      - name: Download verified ARM Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          artifact-ids: ${{ steps.source.outputs.arm64_id }}
+          path: ${{ env.RELEASE_WORK_DIR }}/downloads/arm64
+          merge-multiple: true
+      - name: Download verified Intel Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          artifact-ids: ${{ steps.source.outputs.intel_id }}
+          path: ${{ env.RELEASE_WORK_DIR }}/downloads/intel
+          merge-multiple: true
+      - name: Download verified Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          artifact-ids: ${{ steps.source.outputs.windows_id }}
+          path: ${{ env.RELEASE_WORK_DIR }}/downloads/windows
+          merge-multiple: true
+      - name: Verify installers and prepare release files
+        run: node scripts/stage-release.mjs stage
+      - name: Create or resume a verified draft release
+        run: node scripts/stage-release.mjs draft
+

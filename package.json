@@ -1,0 +1,94 @@
+{
+  "name": "apk-checker",
+  "version": "0.2.4",
+  "private": true,
+  "description": "Android application library and phone / TV emulator desktop",
+  "main": "dist-electron/main.js",
+  "author": "ecojust",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "preview": "vite preview --host 0.0.0.0",
+    "dist": "npm run build && npm run runtime:prepare && electron-builder",
+    "check": "tsc --noEmit",
+    "dev:web": "cross-env WEB_PREVIEW=1 vite --host 0.0.0.0",
+    "test:apk": "tsx scripts/apk-smoke.ts",
+    "runtime:prepare": "node scripts/prepare-runtime.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tar": "^7.5.22",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/yauzl": "^3.4.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "cross-env": "^7.0.3",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.7.2",
+    "vite": "^7.3.7",
+    "vite-plugin-electron": "^0.29.0",
+    "vitest": "^3.0.0"
+  },
+  "build": {
+    "appId": "com.ecojust.apkchecker",
+    "productName": "APK Checker",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "strictVerify": true,
+      "notarize": false
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "extraResources": [
+      {
+        "from": "resources/runtime-catalog.json",
+        "to": "runtime-catalog.json"
+      },
+      {
+        "from": "resources/licenses",
+        "to": "licenses"
+      },
+      {
+        "from": "resources/runtime-bundled",
+        "to": "runtime-bundled"
+      }
+    ]
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
