@@ -44,3 +44,10 @@
 仅 Intel 的第二次尝试（job [127618597471](https://github.com/ecojust/apk-checker/actions/runs/42133367618/job/127618597471)）测试与编译通过，但在准备便携组件时失败：`Cannot prepare platform-tools-darwin-37.0.1: fetch failed`；setup-node 另记录缓存服务 `GetCacheEntryDownloadURL` 的 `ETIMEDOUT`。这次未进入打包及上传，具体底层下载原因未给出，不能声称重试成功。没有更改源码、降低校验或再重跑其他平台。
 
 当前可下载：[ARM Mac 0.2.4](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13464527795)、[Windows x64 0.2.4](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13464632255)。**Intel 0.2.4 下载产物暂不可用**；首轮构建／验签／启动通过与上传失败分别保留。原生构建 run 总体仍为 failure，不宣称三平台整轮全绿。后续需要在网络可用的 Intel runner 上重建并完成上传，当前没有运行中的重试。
+
+
+## Intel 产物恢复与正式发布准备
+
+2026-11-06 用户明确要求合并主分支并发布 Release 后，仅对 Intel 做第三次尝试。run `42133367618` / attempt 3 三平台最终全部 success；Intel 新 artifact 为 [13495503100](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13495503100)，216 项测试、DMG 完整性、签名、x86_64 客户端启动与 IPC 均通过。ARM／Windows 保留原有成功产物，生产源码仍为 `8c1bcac`；此前两次失败继续保留。
+
+以上恢复了旧段落中“Intel 暂不可下载”的限制。正式 Release 准备流程验证这三个产物的 SHA-256、版本、平台报告，以及合并提交相对构建源码仅有文档／发布流程差异，然后以统一名称上传安装包、校验和与来源记录。合并及发布状态见[发布记录](../../history/2026-11-06-001.md)。
