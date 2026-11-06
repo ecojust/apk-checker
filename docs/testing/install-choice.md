@@ -32,3 +32,15 @@
 先启动 `npm run dev:web`，再运行 `python3 scripts/verify-install-ui.py` 和 `python3 scripts/verify-text-input-ui.py`。测试主机需要 Python Playwright 与 Chromium，可通过 `APK_UI_URL`、`APK_CHROMIUM_PATH` 指定地址和浏览器；这些不是产品运行依赖。接口 fixture 验证界面动作及参数，不宣称真实 Android 安装成功。
 
 本轮 216 项已有回归测试通过，TypeScript 与生产构建通过。0.2.3 的 Android 文字输入／安全弹窗证据仍对应旧生产提交；本轮只改设备选择和列表呈现，不扩大这些实际平台结论。0.2.4 安装包验收单独追加。
+
+
+## 原生安装包检查
+
+源提交 [8c1bcac](https://github.com/ecojust/apk-checker/commit/8c1bcac)，[构建 run 42133367618](https://github.com/ecojust/apk-checker/actions/runs/42133367618)。第一轮 ARM、Windows job 全部通过；Intel 测试、构建、便携工具、DMG 挂载／签名／实际客户端启动、校验和全部通过，仅上传安装包时 GitHub CreateArtifact 服务连续 5 次超时，整体保留 failure。只重试 Intel 以恢复产物上传，不修改客户端或覆盖前两个平台结果。
+
+
+第一轮原生日志确认 ARM／Intel 各 216 项通过，Windows 214 项通过、2 项平台跳过。两种 Mac 均确认 `dmgIntegrityVerified`、`mountedBundleSignatureVerified`、`copiedBundleSignatureVerified`、`managedFirstRunVerified`、`rendererStarted`、`preloadIpcVerified`、`bundleUnchangedAfterLaunch` 为 true，架构分别 arm64 和 x86_64。这些是安装包及客户端检查，不是该宿主的真实 APK 验收。
+
+仅 Intel 的第二次尝试（job [127618597471](https://github.com/ecojust/apk-checker/actions/runs/42133367618/job/127618597471)）测试与编译通过，但在准备便携组件时失败：`Cannot prepare platform-tools-darwin-37.0.1: fetch failed`；setup-node 另记录缓存服务 `GetCacheEntryDownloadURL` 的 `ETIMEDOUT`。这次未进入打包及上传，具体底层下载原因未给出，不能声称重试成功。没有更改源码、降低校验或再重跑其他平台。
+
+当前可下载：[ARM Mac 0.2.4](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13464527795)、[Windows x64 0.2.4](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13464632255)。**Intel 0.2.4 下载产物暂不可用**；首轮构建／验签／启动通过与上传失败分别保留。原生构建 run 总体仍为 failure，不宣称三平台整轮全绿。后续需要在网络可用的 Intel runner 上重建并完成上传，当前没有运行中的重试。

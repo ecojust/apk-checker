@@ -6,7 +6,7 @@
 
 界面使用 Electron + React，Android 运行由 Emulator 提供。从 0.2.2 起默认使用模拟器原生窗口，用于显示麦动这类禁止投屏的安全登录弹窗；修复证据见[安全登录说明](docs/testing/secure-login.md)。程序只管理自己的手机／电视模拟器，没有连接、调试或部署到真实设备的界面。内部仍使用 adb 安装应用和控制模拟器，用户无需单独配置它。
 
-0.2.3 安装包（已通过三平台构建及两种 Mac 客户端原生启动）：[Apple Silicon Mac](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13436507367) · [Intel Mac](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13434049459) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42068331626/artifacts/13433619176)。CI 产物保留 14 天，包含安装包和 SHA-256 校验文件；可按文末命令重新构建。
+0.2.4 安装包：[Apple Silicon Mac](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13464527795) · [Windows x64](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13464632255)。Intel 首轮构建、签名和客户端启动检查通过，但安装包上传超时；定向重试又遇到运行组件下载失败，当前没有可下载的 Intel 0.2.4 包。[构建记录](https://github.com/ecojust/apk-checker/actions/runs/42133367618)及[新界面与验收报告](docs/testing/install-choice.md)保留具体结果。CI 产物保留 14 天，包含安装包和 SHA-256 校验文件；可按文末命令重新构建。
 
 ## 首次使用
 
