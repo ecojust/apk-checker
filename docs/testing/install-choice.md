@@ -51,3 +51,6 @@
 2026-11-06 用户明确要求合并主分支并发布 Release 后，仅对 Intel 做第三次尝试。run `42133367618` / attempt 3 三平台最终全部 success；Intel 新 artifact 为 [13495503100](https://github.com/ecojust/apk-checker/actions/runs/42133367618/artifacts/13495503100)，216 项测试、DMG 完整性、签名、x86_64 客户端启动与 IPC 均通过。ARM／Windows 保留原有成功产物，生产源码仍为 `8c1bcac`；此前两次失败继续保留。
 
 以上恢复了旧段落中“Intel 暂不可下载”的限制。正式 Release 准备流程验证这三个产物的 SHA-256、版本、平台报告，以及合并提交相对构建源码仅有文档／发布流程差异，然后以统一名称上传安装包、校验和与来源记录。合并及发布状态见[发布记录](../../history/2026-11-06-001.md)。
+
+
+0.2.4 已于 2026-11-06 正式发布：[GitHub Release](https://github.com/ecojust/apk-checker/releases/tag/v0.2.4)。三个平台安装包的 Release 资产摘要与原生构建日志一致，统一校验文件和来源记录也已实际下载复核；发布准备 run `42205977446` 成功。PR #1 已合并到 master，tag `v0.2.4` 指向 `4f1d27d`；相对原生构建源 `8c1bcac` 仅增加文档与发布流程，应用代码和安装包内容未改动。
