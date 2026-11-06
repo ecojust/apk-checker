@@ -32,6 +32,22 @@ function github(endpoint, missingAllowed = false) {
   if (result.error || result.status !== 0) throw new Error("GitHub API request failed: " + (result.stderr || result.error?.message).trim());
   return JSON.parse(result.stdout);
 }
+function githubPost(endpoint, body) {
+  const result = spawnSync("gh", ["api", "--method", "POST", endpoint, "--input", "-"], {
+    input: JSON.stringify(body), encoding: "utf8", maxBuffer: 16 * 1024 ** 2,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error("GitHub API create failed: " + (result.stderr || result.error?.message).trim());
+  }
+  return JSON.parse(result.stdout);
+}
+export function createDraftRelease(repo, tag, target, notes, post = githubPost) {
+  // Use the creation response directly: the draft may not be listed immediately.
+  return post("repos/" + repo + "/releases", {
+    tag_name: tag, target_commitish: target, name: "APK Checker " + tag,
+    body: notes, draft: true, prerelease: false,
+  });
+}
 function repository() {
   const value = process.env.GITHUB_REPOSITORY || "";
   assert.match(value, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "Invalid repository");
@@ -230,10 +246,9 @@ async function prepareDraft() {
     assert.equal(release.target_commitish, provenance.tagTarget, "Existing draft targets another commit");
     assert(release.assets.every((asset) => names.includes(asset.name)), "Draft contains unrelated assets");
   } else {
-    command("gh", ["release", "create", tag, "--repo", repo, "--draft", "--target", provenance.tagTarget,
-      "--title", "APK Checker " + tag, "--notes-file", notes]);
-    release = releaseByTag(repo, tag);
-    assert(release, "Created draft release could not be found");
+    release = createDraftRelease(repo, tag, provenance.tagTarget, await readFile(notes, "utf8"));
+    assert(Number.isSafeInteger(release.id) && release.id > 0, "Created draft has no valid release ID");
+    assert.equal(release.tag_name, tag, "Created draft tag mismatch");
     assert.equal(release.draft, true, "Expected a draft release");
     assert.equal(release.target_commitish, provenance.tagTarget, "Draft target mismatch");
   }

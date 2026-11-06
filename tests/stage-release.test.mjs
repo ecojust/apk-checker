@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:
 import path from "node:path";
 import os from "node:os";
 import {
-  platforms, releaseByTag, sha256, stageInstallers, validateChangedFiles, validateRun, verifyPlatformDirectory,
+  platforms, createDraftRelease, releaseByTag, sha256, stageInstallers, validateChangedFiles, validateRun, verifyPlatformDirectory,
 } from "../scripts/stage-release.mjs";
 
 const temporary = [];
@@ -140,4 +140,23 @@ it("finds a pending draft by authenticated listing and release ID without requir
     "repos/ecojust/apk-checker/releases?per_page=100&page=1",
     "repos/ecojust/apk-checker/releases/42",
   ]);
+});
+
+
+it("uses the POST creation response even while the new draft is absent from release listings", () => {
+  const calls = [];
+  const target = "a".repeat(40);
+  const created = { id: 42, tag_name: "v0.2.4", target_commitish: target, draft: true, assets: [] };
+  const result = createDraftRelease("ecojust/apk-checker", "v0.2.4", target, "Line 1\nLine 2", (endpoint, body) => {
+    calls.push({ endpoint, body });
+    // Only POST /releases is available; lookup/list visibility is not required.
+    if (endpoint !== "repos/ecojust/apk-checker/releases" || !body) throw new Error("Draft is not yet visible");
+    return created;
+  });
+  expect(result).toBe(created);
+  expect(result.id).toBe(42);
+  expect(calls).toEqual([{ endpoint: "repos/ecojust/apk-checker/releases", body: {
+    tag_name: "v0.2.4", target_commitish: target, name: "APK Checker v0.2.4",
+    body: "Line 1\nLine 2", draft: true, prerelease: false,
+  } }]);
 });
