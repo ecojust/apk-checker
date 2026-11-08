@@ -1,0 +1,55 @@
+{
+  "source": "GitHub check-run annotations; original failure retained",
+  "runUrl": "https://github.com/ecojust/apk-checker/actions/runs/42497849904/attempts/1",
+  "commit": "ce99f7d896ccb660e7f3bec32ca1e67aa8c0cdea",
+  "productionVersion": "0.2.6",
+  "artifactId": 13624357477,
+  "userMacVerified": false,
+  "summary": {
+    "status": "failed",
+    "application": "vstv",
+    "source": "https://github.com/vesaaa/vstv/releases/tag/v2.8.0",
+    "sha256": "52582233d44b93e1745873320b206540711b6969656d5edd93936c608eada393",
+    "referenceNote": "Official ARM reference release; the user's exact VSTV version is unknown. Test the unchanged ARM APK through the catalog image's native bridge on Linux x64.",
+    "optionalProbes": {
+      "keyboard": "not-applicable",
+      "login": "not-applicable"
+    },
+    "steps": [
+      {
+        "name": "Verify fixed original APK checksum",
+        "status": "passed",
+        "durationMs": 17
+      },
+      {
+        "name": "Verify installer-provided core archives exist",
+        "status": "passed",
+        "durationMs": 1
+      },
+      {
+        "name": "Import APK with embedded parser before runtime preparat",
+        "status": "passed",
+        "durationMs": 110
+      },
+      {
+        "name": "Record first-use license and prepare managed engine/ima",
+        "status": "passed",
+        "durationMs": 43110
+      },
+      {
+        "name": "Automatically boot private AVD and install APK through ",
+        "status": "failed",
+        "durationMs": 57341
+      }
+    ],
+    "privateShutdownWatchdogWaitMs": 0,
+    "privateProcessesAfterShutdown": [],
+    "fullDiagnosticArtifact": "summary.json"
+  },
+  "errors": [
+    {
+      "title": "Managed APK smoke test",
+      "message": "stdout:\nPerforming Streamed Install\nstderr:\nadb: failed to install /tmp/apk-checker-managed-smoke-g5SZzp/library/apks/52582233d44b93e1745873320b206540711b6969656d5edd93936c608eada393.apk:\n退出代码：1\nCommand failed: /tmp/apk-checker-managed-smoke-g5SZzp/managed-runtime/sdk/platform-tools/adb -s emulator-5554 install --user 0 -r /tmp/apk-checker-managed-smoke-g5SZzp/library/apks/52582233d44b93e1745873320b206540711b6969656d5edd93936c608eada393.apk\nadb: failed to install /tmp/apk-checker-managed-smoke-g5SZzp/library/apks/52582233d44b93e1745873320b206540711b6969656d5edd93936c608eada393.apk: \n"
+    }
+  ]
+}
