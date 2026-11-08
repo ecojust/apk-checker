@@ -37,6 +37,10 @@ const app: LibraryApp = {
   },
 };
 
+function foregroundDump(component: string, userId = 0, displayId = 0, locked = false): string {
+  return `Display #${displayId} (activities from top to bottom):\n  topResumedActivity=ActivityRecord{abc u${userId} ${component} t3}\nKeyguardController:\n  mKeyguardShowing=${locked}\n  mAodShowing=false\n`;
+}
+
 function fakeChild(autoClose = true): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
@@ -163,8 +167,12 @@ describe("AndroidRuntime", () => {
       if (args.includes("emu"))
         return `${args[1] === "emulator-5554" ? "Phone_API_35" : "TV_API_35"}\nOK\n`;
       if (args.includes("getprop")) return "1\n";
+      if (args.includes("get-current-user")) return "0\n";
+      if (args.includes("get-started-user-state")) return "RUNNING_UNLOCKED\n";
+      if (args.includes("dumpsys")) return foregroundDump("org.example.app/.Main$Inner");
       if (args.includes("resolve-activity"))
-        return "org.example.app/.Main$Inner\n";
+        return args.includes("android.intent.category.HOME") ? "com.android.launcher/.Home\n" : "org.example.app/.Main$Inner\n";
+      if (args.includes("query-activities")) return "No activities found\n";
       if (args.includes("start")) return "Status: ok\n";
       if (args.includes("packages")) return "package:org.example.app\n";
       return "Success\n";
@@ -246,7 +254,7 @@ describe("AndroidRuntime", () => {
     expect(result).toEqual({ avd: "TV_API_35" });
     expect(processMocks.execFile).toHaveBeenCalledWith(
       expect.any(String),
-      ["-s", "emulator-5556", "install", "-r", apkPath],
+      ["-s", "emulator-5556", "install", "--user", "0", "-r", apkPath],
       expect.objectContaining({ timeout: 180000, windowsHide: true }),
       expect.any(Function),
     );
@@ -262,6 +270,69 @@ describe("AndroidRuntime", () => {
     await expect(
       runtime.install(app, apkPath, "phone", settings, vi.fn()),
     ).rejects.toThrow("INSTALL_FAILED_NO_MATCHING_ABIS");
+  });
+
+  it("does not accept install Success unless the exact package exists for the current user", async () => {
+    const normal = output;
+    output = (args) => args.includes("packages") ? "package:org.example.app.other\n" : normal(args);
+    const progress = vi.fn();
+    await expect(runtime.install(app, apkPath, "tv", settings, progress)).rejects.toThrow("重新安装（保留数据）");
+    expect(progress.mock.calls.some(([message]) => message.includes("已安装到"))).toBe(false);
+  });
+
+  it.each(["", "-1", "10\n0", "1;id", "999999999999999999999"])("rejects an invalid current Android user %j", async (user) => {
+    const normal = output;
+    output = (args) => args.includes("get-current-user") ? user : normal(args);
+    await expect(runtime.install(app, apkPath, "tv", settings, vi.fn())).rejects.toThrow("当前 Android 用户");
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("install"))).toBe(false);
+  });
+
+  it("binds installation, package checks, resolution and launch to the same nonzero Android user", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("get-current-user") ? "10\n" : args.includes("dumpsys") ? foregroundDump("org.example.app/.Main$Inner", 10) : normal(args);
+    await runtime.install(app, apkPath, "tv", settings, vi.fn());
+    await runtime.launch(app, "tv", settings, vi.fn());
+    const commands = processMocks.execFile.mock.calls.map((call) => call[1] as string[]);
+    for (const command of commands.filter((args) => args.includes("install") || args.includes("packages") || args.includes("resolve-activity") || args.includes("start"))) {
+      expect(command.slice(command.indexOf("--user"), command.indexOf("--user") + 2)).toEqual(["--user", "10"]);
+    }
+  });
+
+  it("reports a stale installation before resolving or starting an absent package", async () => {
+    const fixture = nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("packages") ? "" : normal(args);
+    await expect(runtime.launch(app, "tv", settings, vi.fn())).rejects.toThrow("未在模拟器当前用户中找到");
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("resolve-activity") || call[1].includes("start"))).toBe(false);
+    expect(fixture.children[0].child.exitCode).toBeNull();
+  });
+
+  it("waits for the Android user to unlock before querying installed packages and launcher activities", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    let userChecks = 0;
+    output = (args) => {
+      if (args.includes("get-started-user-state")) return ++userChecks < 3 ? "RUNNING_UNLOCKING\n" : "RUNNING_UNLOCKED\n";
+      if (args.includes("packages") || (args.includes("resolve-activity") && !args.includes("android.intent.category.HOME"))) expect(userChecks).toBeGreaterThanOrEqual(3);
+      return normal(args);
+    };
+    await runtime.launch(app, "tv", settings, vi.fn());
+    expect(userChecks).toBe(3);
+  });
+
+  it("leaves a locked Android user for the user to unlock without guessing that the package is missing", async () => {
+    const fixture = nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("get-started-user-state") ? "RUNNING_LOCKED\n" : normal(args);
+    vi.useFakeTimers();
+    const opening = runtime.launch(app, "tv", settings, vi.fn());
+    const rejected = expect(opening).rejects.toThrow("尚未解锁");
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("get-started-user-state"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejected;
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("packages") || call[1].includes("start"))).toBe(false);
+    expect(fixture.children[0].child.exitCode).toBeNull();
   });
 
   it("rejects invalid packages before any Android command", async () => {
@@ -345,6 +416,14 @@ describe("AndroidRuntime", () => {
         "am",
         "start",
         "-W",
+        "--user",
+        "0",
+        "-a",
+        "android.intent.action.MAIN",
+        "-c",
+        "android.intent.category.LEANBACK_LAUNCHER",
+        "-f",
+        "0x10200000",
         "-n",
         "'org.example.app/.Main$Inner'",
       ],
@@ -386,6 +465,142 @@ describe("AndroidRuntime", () => {
       expect.any(Object),
       expect.any(Function),
     );
+    const start = processMocks.execFile.mock.calls.find((call) => call[1].includes("start"))![1];
+    expect(start).toContain("android.intent.category.LAUNCHER");
+    expect(start).not.toContain("android.intent.category.LEANBACK_LAUNCHER");
+  });
+
+  it("uses enabled PackageManager candidates when multiple launchers resolve to Android's chooser", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => {
+      if (args.includes("resolve-activity") && !args.includes("android.intent.category.HOME")) return "android/com.android.internal.app.ResolverActivity\n";
+      if (args.includes("query-activities")) return "org.other/.Hijack\norg.example.app/.AFirst\norg.example.app/.Main$Inner\norg.example.app/.Main;reboot\n";
+      return normal(args);
+    };
+    await runtime.launch({ ...app, tvActivity: "org.example.app.Main$Inner" }, "tv", settings, vi.fn());
+    const start = processMocks.execFile.mock.calls.find((call) => call[1].includes("start"))![1];
+    expect(start).toContain("'org.example.app/.Main$Inner'");
+    expect(start).toContain("android.intent.category.LEANBACK_LAUNCHER");
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("query-activities"))).toBe(true);
+  });
+
+  it("does not bypass PackageManager with an unavailable manifest launcher", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("resolve-activity") ? "No activity found\n" : normal(args);
+    const error = await runtime.launch({ ...app, tvActivity: "org.example.app.DisabledActivity", launchableActivity: "org.example.app.DisabledActivity" }, "tv", settings, vi.fn()).catch((failure: Error) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("未找到可用启动入口");
+    expect((error as Error).message).toContain("org.example.app");
+    expect((error as Error).message).toContain("Android 用户：0（RUNNING_UNLOCKED）");
+    expect((error as Error).message).toContain("resolve: No activity found");
+    expect((error as Error).message).toContain("query: No activities found");
+    expect((error as Error).message).toContain("android.intent.category.LEANBACK_LAUNCHER");
+    expect((error as Error).message).toContain("android.intent.category.LAUNCHER");
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("start"))).toBe(false);
+  });
+
+  it.each(["", "Starting: Intent { cmp=org.example.app/.Main }\n"])("does not announce launch success without an explicit am start status: %j", async (response) => {
+    nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("start") ? response : normal(args);
+    const progress = vi.fn();
+    await expect(runtime.launch(app, "tv", settings, progress)).rejects.toThrow("启动应用失败");
+    expect(progress.mock.calls.some(([message]) => message.includes("已在"))).toBe(false);
+  });
+
+  it("retries once after confirmed system HOME hides an apparently successful launch, then verifies stable foreground", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    let starts = 0;
+    let foregroundChecks = 0;
+    output = (args) => {
+      if (args.includes("start")) { starts += 1; return "Status: ok\n"; }
+      if (args.includes("dumpsys")) {
+        foregroundChecks += 1;
+        return foregroundDump(starts < 2 ? "com.android.launcher/.Home" : "org.example.app/.Main$Inner");
+      }
+      return normal(args);
+    };
+    vi.useFakeTimers();
+    const opening = runtime.launch(app, "tv", settings, vi.fn());
+    await vi.waitFor(() => expect(foregroundChecks).toBeGreaterThan(0));
+    await vi.advanceTimersByTimeAsync(4000);
+    await opening;
+    expect(starts).toBe(2);
+    const commands = processMocks.execFile.mock.calls.filter((call) => call[1].includes("start"));
+    expect(commands[0][1]).toEqual(commands[1][1]);
+  });
+
+  it.each([
+    { name: "persistent HOME", component: "com.android.launcher/.Home", user: 0, display: 0, locked: false, starts: 2, message: "未确认应用显示在前台" },
+    { name: "permission prompt", component: "com.google.android.permissioncontroller/com.android.permissioncontroller.permission.ui.GrantPermissionsActivity", user: 0, display: 0, locked: false, starts: 1, message: "系统授权界面" },
+    { name: "other app", component: "org.other/.Screen", user: 0, display: 0, locked: false, starts: 1, message: "未确认应用显示在前台" },
+    { name: "different user", component: "org.example.app/.Main", user: 10, display: 0, locked: false, starts: 1, message: "未确认应用显示在前台" },
+    { name: "secondary display", component: "org.example.app/.Main", user: 0, display: 1, locked: false, starts: 1, message: "未确认应用显示在前台" },
+    { name: "locked screen", component: "com.android.launcher/.Home", user: 0, display: 0, locked: true, starts: 1, message: "完成解锁" },
+  ])("does not claim foreground success or disturb $name", async ({ component, user, display, locked, starts, message }) => {
+    const fixture = nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("dumpsys") ? foregroundDump(component, user, display, locked) : normal(args);
+    const progress = vi.fn();
+    vi.useFakeTimers();
+    const opening = runtime.launch(app, "tv", settings, progress);
+    const rejected = expect(opening).rejects.toThrow(message);
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("dumpsys"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(12_000);
+    await rejected;
+    expect(processMocks.execFile.mock.calls.filter((call) => call[1].includes("start"))).toHaveLength(starts);
+    expect(fixture.children[0].child.exitCode).toBeNull();
+    expect(progress.mock.calls.some(([text]) => text.includes("已在模拟器原生窗口打开"))).toBe(false);
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("kill") || call[1].includes("force-stop"))).toBe(false);
+  });
+
+  it("does not retry or report success after disposal during foreground verification", async () => {
+    const fixture = nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => {
+      if (args.includes("dumpsys")) { void runtime.dispose(); return foregroundDump("com.android.launcher/.Home"); }
+      return normal(args);
+    };
+    const progress = vi.fn();
+    await expect(runtime.launch(app, "tv", settings, progress)).rejects.toThrow("正在退出");
+    await runtime.dispose();
+    expect(processMocks.execFile.mock.calls.filter((call) => call[1].includes("start"))).toHaveLength(1);
+    expect(fixture.children).toHaveLength(1);
+    expect(progress.mock.calls.some(([text]) => text.includes("已在模拟器原生窗口打开"))).toBe(false);
+  });
+
+  it.each(["missing", "conflicting"])("does not accept a resumed app when primary keyguard state is %s", async (state) => {
+    nativeRuntimeFixture();
+    const normal = output;
+    output = (args) => args.includes("dumpsys")
+      ? state === "missing" ? foregroundDump("org.example.app/.Main").split("KeyguardController:")[0]
+        : foregroundDump("org.example.app/.Main") + "  mKeyguardShowing=true\n"
+      : normal(args);
+    vi.useFakeTimers();
+    const opening = runtime.launch(app, "tv", settings, vi.fn());
+    const rejected = expect(opening).rejects.toThrow("未确认应用显示在前台");
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("dumpsys"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(12_000);
+    await rejected;
+    expect(processMocks.execFile.mock.calls.filter((call) => call[1].includes("start"))).toHaveLength(1);
+  });
+
+  it("requires stable foreground instead of accepting one transient resumed activity", async () => {
+    nativeRuntimeFixture();
+    const normal = output;
+    let checks = 0;
+    output = (args) => args.includes("dumpsys") ? foregroundDump(++checks === 1 ? "org.example.app/.Main" : "com.google.android.permissioncontroller/.GrantPermissionsActivity") : normal(args);
+    vi.useFakeTimers();
+    const opening = runtime.launch(app, "tv", settings, vi.fn());
+    const rejected = expect(opening).rejects.toThrow("系统授权界面");
+    await vi.waitFor(() => expect(checks).toBeGreaterThan(0));
+    await vi.advanceTimersByTimeAsync(12_000);
+    await rejected;
+    expect(checks).toBeGreaterThan(1);
+    expect(processMocks.execFile.mock.calls.filter((call) => call[1].includes("start"))).toHaveLength(1);
   });
 
   it("does not open a window when an application has no launcher", async () => {
@@ -394,7 +609,7 @@ describe("AndroidRuntime", () => {
       args.includes("resolve-activity") ? "No activity found" : normal(args);
     await expect(
       runtime.launch(app, "phone", settings, vi.fn()),
-    ).rejects.toThrow("没有可启动");
+    ).rejects.toThrow("未找到可用启动入口");
     expect(processMocks.spawn).not.toHaveBeenCalled();
   });
 

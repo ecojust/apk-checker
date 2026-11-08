@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { displayCommand, hasVideoTexture } from "./display";
+import { parseForegroundActivity, parseKeyguardLocked } from "./launch-state";
 import {
   setEmulatorClipboard,
   validateClipboardText,
@@ -821,18 +822,117 @@ export class AndroidRuntime {
       mode,
       onProgress,
     );
+    const userId = await this.currentUser(adb, serial);
     onProgress(`正在安装 ${app.name}…`);
     const output = await this.run(
       adb,
-      ["-s", serial, "install", "-r", apkPath],
+      ["-s", serial, "install", "--user", String(userId), "-r", apkPath],
       180_000,
     );
     if (!/^Success\s*$/m.test(output))
       throw new Error(`安装未完成：${output.trim() || "adb 未返回成功状态。"}`);
+    this.assertActive();
+    await this.assertPackagePresent(adb, serial, userId, app.packageName);
     onProgress(
-      `${app.name} 已安装到${mode === "phone" ? "手机" : "电视"}桌面。`,
+      `${app.name} 已安装到${mode === "phone" ? "手机" : "电视"}模拟器，可从 APK Checker 桌面打开。`,
     );
     return { avd };
+  }
+
+  private async currentUser(adb: string, serial: string): Promise<number> {
+    const output = (await this.run(adb, ["-s", serial, "shell", "am", "get-current-user"], 3000)).trim();
+    this.assertActive();
+    const userId = Number(output);
+    if (!/^\d+$/.test(output) || !Number.isSafeInteger(userId) || userId > 2_147_483_647)
+      throw new Error("无法确认模拟器当前 Android 用户，请稍后重试。");
+    return userId;
+  }
+
+  private async assertPackagePresent(adb: string, serial: string, userId: number, packageName: string): Promise<void> {
+    const output = await this.run(adb, ["-s", serial, "shell", "pm", "list", "packages", "--user", String(userId), packageName]);
+    this.assertActive();
+    if (!output.split(/\r?\n/).some((line) => line.trim() === `package:${packageName}`))
+      throw new Error(`未在模拟器当前用户中找到此应用。请在应用卡片的更多操作中选择“重新安装（保留数据）”。\n包名：${packageName}；Android 用户：${userId}`);
+  }
+
+  private async waitForUnlockedUser(adb: string, serial: string, userId: number): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const state = (await this.run(adb, ["-s", serial, "shell", "am", "get-started-user-state", String(userId)], 3000)).trim();
+      this.assertActive();
+      if (state === "RUNNING_UNLOCKED") return;
+      if (!/^RUNNING_(?:LOCKED|UNLOCKING)$/.test(state))
+        throw new Error("模拟器当前用户尚未就绪，请在模拟器窗口完成启动或解锁后重试。");
+      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+      this.assertActive();
+    }
+    throw new Error("模拟器当前用户尚未解锁，请在模拟器窗口完成解锁后重新打开应用。");
+  }
+
+  private async waitForForeground(
+    adb: string,
+    serial: string,
+    userId: number,
+    packageName: string,
+    startAgain: () => Promise<void>,
+    progress: Progress,
+  ): Promise<void> {
+    const homeOutput = await this.run(adb, [
+      "-s", serial, "shell", "cmd", "package", "resolve-activity", "--brief",
+      "--user", String(userId), "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME",
+    ], 3000).catch(() => "");
+    this.assertActive();
+    const home = homeOutput.split(/\r?\n/).map((line) => line.trim()).find((line) => COMPONENT_PATTERN.test(line));
+    const normalize = (component: string) => {
+      const [pkg, name] = component.split("/");
+      return `${pkg}/${name.startsWith(".") ? pkg + name : name}`;
+    };
+    let stable = 0;
+    let homeSince: number | undefined;
+    let retried = false;
+    let mayRetryHome = true;
+    let lastForeground: ReturnType<typeof parseForegroundActivity>;
+    let lastLocked: boolean | undefined;
+    let diagnostic = "";
+    const deadline = Date.now() + 12_000;
+    while (Date.now() < deadline) {
+      const output = await this.run(adb, ["-s", serial, "shell", "dumpsys", "activity", "activities"], 3000)
+        .catch((error) => { diagnostic = messageOf(error).slice(-1000); return ""; });
+      this.assertActive();
+      lastForeground = parseForegroundActivity(output, userId);
+      lastLocked = parseKeyguardLocked(output);
+      if (lastForeground?.packageName === packageName && lastLocked === false) {
+        stable += 1;
+        if (stable >= 2) return;
+      } else stable = 0;
+
+      const isHome = Boolean(home && !home.startsWith("android/") && lastForeground && normalize(home) === normalize(lastForeground.component));
+      if (!lastForeground || lastLocked !== false || (!isHome && lastForeground.packageName !== packageName))
+        mayRetryHome = false;
+      if (isHome && lastLocked === false) {
+        homeSince ??= Date.now();
+        if (!retried && mayRetryHome && Date.now() - homeSince >= 2000) {
+          retried = true;
+          progress("模拟器仍显示系统桌面，正在重新打开应用…");
+          this.assertActive();
+          if (await this.currentUser(adb, serial) !== userId)
+            throw new Error("模拟器当前用户已切换，请重新打开应用。");
+          await startAgain();
+          this.assertActive();
+        }
+      } else homeSince = undefined;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+      this.assertActive();
+    }
+    if (lastLocked)
+      throw new Error("应用尚未显示在前台，请在模拟器窗口完成解锁后重试。");
+    if (lastForeground && /^(?:com\.android\.permissioncontroller|com\.google\.android\.permissioncontroller|com\.android\.packageinstaller)$/.test(lastForeground.packageName))
+      throw new Error("模拟器正在显示系统授权界面，请在窗口完成授权或取消后重新打开应用。");
+    throw new Error([
+      "未确认应用显示在前台。请查看模拟器窗口；若仍只有系统桌面，可在应用卡片的更多操作中选择“重新安装（保留数据）”。",
+      lastForeground && `当前界面：${lastForeground.component}`,
+      diagnostic,
+    ].filter(Boolean).join("\n"));
   }
 
   private assertInstalled(
@@ -867,6 +967,7 @@ export class AndroidRuntime {
       this.nativeDisplay,
     );
     const nativeSession = this.ownedEmulators.get(avd);
+    const userId = await this.currentUser(adb, serial);
     // Wake only the selected emulator. This cannot unlock a PIN-protected screen.
     await this.run(adb, [
       "-s",
@@ -876,6 +977,7 @@ export class AndroidRuntime {
       "keyevent",
       "KEYCODE_WAKEUP",
     ]).catch(() => undefined);
+    this.assertActive();
     await this.run(adb, [
       "-s",
       serial,
@@ -883,60 +985,80 @@ export class AndroidRuntime {
       "wm",
       "dismiss-keyguard",
     ]).catch(() => undefined);
-    const category =
+    this.assertActive();
+    await this.waitForUnlockedUser(adb, serial, userId);
+    await this.assertPackagePresent(adb, serial, userId, app.packageName);
+    let category =
       mode === "tv"
         ? "android.intent.category.LEANBACK_LAUNCHER"
         : "android.intent.category.LAUNCHER";
-    const resolveActivity = async (launcherCategory: string) =>
-      parseResolvedActivity(
-        await this.run(adb, [
-          "-s",
-          serial,
-          "shell",
-          "cmd",
-          "package",
-          "resolve-activity",
-          "--brief",
-          "-a",
-          "android.intent.action.MAIN",
-          "-c",
-          launcherCategory,
-          app.packageName,
-        ]),
-        app.packageName,
-      );
+    const resolutionDiagnostics: string[] = [];
+    const resolveActivity = async (launcherCategory: string) => {
+      const intent = [
+        "--user", String(userId), "-a", "android.intent.action.MAIN",
+        "-c", launcherCategory, "-p", app.packageName,
+      ];
+      const resolvedOutput = await this.run(adb, [
+        "-s", serial, "shell", "cmd", "package", "resolve-activity", "--brief", ...intent,
+      ]);
+      this.assertActive();
+      const resolved = parseResolvedActivity(resolvedOutput, app.packageName);
+      if (resolved) return resolved;
+      // Multiple enabled launcher activities can resolve to Android's chooser.
+      // Select only components returned for this user/category by PackageManager;
+      // metadata only ranks those candidates; am start enforces exported/permissions.
+      const candidatesOutput = await this.run(adb, [
+        "-s", serial, "shell", "cmd", "package", "query-activities", "--components", ...intent,
+      ]);
+      this.assertActive();
+      resolutionDiagnostics.push(`${launcherCategory}:\nresolve: ${resolvedOutput.trim().slice(-600) || "（空）"}\nquery: ${candidatesOutput.trim().slice(-600) || "（空）"}`);
+      const candidates = candidatesOutput.split(/\r?\n/)
+        .map((line) => parseResolvedActivity(line, app.packageName))
+        .filter((component): component is string => Boolean(component));
+      const preferred = launcherCategory === "android.intent.category.LEANBACK_LAUNCHER" ? app.tvActivity : app.launchableActivity;
+      return candidates.find((component) => {
+        const name = component.split("/")[1];
+        return (name.startsWith(".") ? app.packageName + name : name) === preferred;
+      }) || candidates.sort()[0];
+    };
     onProgress(`正在打开 ${app.name}…`);
     let activity = await resolveActivity(category);
     if (!activity && mode === "tv") {
       onProgress(
         "应用没有电视启动入口，将在电视设备中使用普通启动入口；遥控器兼容性取决于应用。",
       );
-      activity = await resolveActivity("android.intent.category.LAUNCHER");
+      category = "android.intent.category.LAUNCHER";
+      activity = await resolveActivity(category);
     }
     if (!activity)
       throw new Error(
-        "此 APK 没有可启动的应用入口，可能是插件、服务或不兼容当前设备。",
+        [
+          "应用已安装，但当前 Android 用户未找到可用启动入口。请在应用卡片的更多操作中选择“重新安装（保留数据）”后重试。",
+          `包名：${app.packageName}；Android 用户：${userId}（RUNNING_UNLOCKED）`,
+          ...resolutionDiagnostics,
+        ].join("\n"),
       );
     // adb shell joins arguments; quote the validated component to preserve Java inner-class '$'.
-    const output = await this.run(
-      adb,
-      ["-s", serial, "shell", "am", "start", "-W", "-n", `'${activity}'`],
-      45_000,
-    );
-    const launchStatus = output.match(/^Status:\s*(\S+)/im)?.[1];
-    if (
-      /^(?:Error|Exception)|Error type \d|Permission Denial|SecurityException/im.test(
-        output,
-      ) ||
-      (launchStatus && launchStatus.toLowerCase() !== "ok")
-    ) {
-      throw new Error(`启动应用失败：${output.trim()}`);
-    }
-    this.assertActive();
+    const startActivity = async () => {
+      const output = await this.run(adb, [
+        "-s", serial, "shell", "am", "start", "-W", "--user", String(userId),
+        "-a", "android.intent.action.MAIN", "-c", category,
+        "-f", "0x10200000", "-n", `'${activity}'`,
+      ], 45_000);
+      this.assertActive();
+      const launchStatus = output.match(/^Status:\s*(\S+)/im)?.[1];
+      if (/^(?:Error|Exception)|Error type \d|Permission Denial|SecurityException/im.test(output) || launchStatus?.toLowerCase() !== "ok")
+        throw new Error(`启动应用失败：${output.trim() || "Android 未返回可确认的启动状态。"}`);
+    };
+    await startActivity();
     if (this.nativeDisplay) {
       if (nativeSession && childHasExited(nativeSession.child)) {
         throw new Error("模拟器窗口已关闭，请重新打开应用。");
       }
+      await this.waitForForeground(adb, serial, userId, app.packageName, startActivity, onProgress);
+      this.assertActive();
+      if (nativeSession && childHasExited(nativeSession.child))
+        throw new Error("模拟器窗口已关闭，请重新打开应用。");
       onProgress(`${app.name} 已在模拟器原生窗口打开。`);
       return;
     }
@@ -1005,6 +1127,9 @@ export class AndroidRuntime {
       child.once("exit", (code) => handleExit(null, code));
     });
     this.assertActive();
+    await this.waitForForeground(adb, serial, userId, app.packageName, startActivity, onProgress);
+    this.assertActive();
+    if (childHasExited(child)) throw new Error("应用显示窗口已关闭，请重新打开应用。");
     onProgress(`${app.name} 已在独立窗口打开。`);
   }
 
