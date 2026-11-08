@@ -53,7 +53,24 @@ Android 官方说明：
 - 独立代码与文档审查通过，无阻断问题。2026-11-08 本地 `npm run check`、`npm test`、`npm run build`、`git diff --check` 均通过；全部 8 个测试文件、240 项测试通过，其中 AndroidRuntime 108 项，本次新增 16 项。
 - 故障回归覆盖：用户原始错误和退出代码 0；stdout／stderr 分块及后续噪声；退出事件后异步尾日志；仍存活的失败进程；二次失败不再重试；重试准备失败保留首因；无法停止时保留归属；退出／取消；外部设备隔离；超时阶段、ADB 错误及两路输出。后台转原生窗口回归确认同一 AVD、先退出再冷启动及无 `-wipe-data`。
 - 当前开发环境为 Linux；单元测试使用模拟子进程与 adb 输出，不能作为 Apple Silicon Mac 上实际启动 Android TV 的证据。
-- 本地验证已完成，修复分支 `fix/emulator-snapshot-recovery` 待推送创建 PR 和运行安装包构建。既有 [v0.2.4](https://github.com/ecojust/apk-checker/releases/tag/v0.2.4) 及其附件没有改变，不包含此次修复；尚未发布 0.2.5 Release。
+- 修复源码 [3b14668](https://github.com/ecojust/apk-checker/commit/3b14668d9d93581e64f706cb627b404efcd31ab3) 已推送至 `fix/emulator-snapshot-recovery`，见 [PR #2](https://github.com/ecojust/apk-checker/pull/2)。[原生安装包构建 42495266207](https://github.com/ecojust/apk-checker/actions/runs/42495266207)已 completed／success：Apple Silicon、Intel Mac 和 Windows 三平台全部通过并上传安装包；同一 SHA 的重复 PR 构建已取消以避免重复打包。
+- 既有 [v0.2.4](https://github.com/ecojust/apk-checker/releases/tag/v0.2.4) 及其附件没有改变，不包含此次修复；尚未合并 master 或发布 0.2.5 Release。
 - Mac 构建工作流会检查安装包、ad-hoc 签名、客户端启动和 IPC；它不启动 API 36 Android TV，不能代替用户设备的冷启动验收。
+
+## 修复测试包
+
+[下载 Apple Silicon Mac 0.2.5 测试包](https://github.com/ecojust/apk-checker/actions/runs/42495266207/artifacts/13623123152)。需登录 GitHub；解压后打开 `APK Checker-0.2.5-mac-arm64.dmg`，将应用拖到「应用程序」替换旧版，再重试电视模式。原应用数据目录继续复用。
+
+该 artifact 的来源 SHA 已通过 GitHub API 核对为 `3b14668d9d93581e64f706cb627b404efcd31ab3`。对应 [ARM 原生 job](https://github.com/ecojust/apk-checker/actions/runs/42495266207/job/128776141401) 的 240 项测试、构建、包内工具原生执行、DMG／签名／客户端启动验证及上传均 success。安装包内附 `SHA256SUMS.txt`，可按 README 核验；它与 GitHub 对 artifact ZIP 的摘要是不同对象。
+
+已读取完成后的 ARM job 日志，记录 DMG SHA-256：
+
+```text
+b6bbc64cdf9b6ba4089f7054b779c30759e2451c57e73cce30719e74c44d7507  APK Checker-0.2.5-mac-arm64.dmg
+```
+
+同一源码的[Intel Mac 测试包](https://github.com/ecojust/apk-checker/actions/runs/42495266207/artifacts/13622854359)和[Windows 测试包](https://github.com/ecojust/apk-checker/actions/runs/42495266207/artifacts/13623212586)也已生成。
+
+CI artifact 保留 14 天，当前过期时间为 2026-11-22 UTC；这是修复测试包，尚未发布为 GitHub Release。现阶段未在本地下载该 DMG，摘要、签名和启动结果来自原生 CI 日志，元数据及来源 SHA 另经 GitHub API 核对。Mac 使用 ad-hoc 签名，未做 Apple 公证；遇到系统拦截时按 README 的 macOS 安装说明操作。用户 Mac 的 Android TV 实际恢复结果仍待反馈。
 
 持续记录见 [history](../../history/2026-11-08-001.md)。
