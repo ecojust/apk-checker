@@ -68,6 +68,12 @@ xattr -dr com.apple.quarantine "/Applications/APK Checker.app"
 
 后台安装后的第一次打开会保存并重启同一个模拟器，以显示原生窗口，APK 和数据会保留。后续会复用该模式的原生窗口；如果已最小化，可从 Dock／任务栏恢复。关闭原生窗口会退出对应模拟器，再次打开应用会自动启动。手机模式运行横屏软件时，可用原生窗口侧边栏的旋转按钮调整方向。
 
+### 模拟器启动失败：goldfish_pipe
+
+如果错误含 `error while loading state ... goldfish_pipe`，表示模拟器恢复保存状态失败，即使显示「退出代码：0」也不代表 Android 已启动。0.2.4 用户可先完全退出 APK Checker 和模拟器，备份对应私有 AVD 的 `config.ini`，将 `fastboot.forceColdBoot=no` 改为 `fastboot.forceColdBoot=yes`，保存后重新打开；冷启动保留已安装应用与用户数据，无需重装系统镜像。
+
+Apple Silicon 电视模式的具体目录、操作边界及自动恢复修复的验证状态见[快照恢复说明](docs/testing/emulator-snapshot-recovery.md)。修复源码的版本为 0.2.5，发布及安装包状态以该说明为准；上方的 0.2.4 下载链接仍指向原版。
+
 ### 用电脑输入文字
 
 如果电脑输入法的候选文字没有进入 Android 输入框，可在 0.2.3 中：

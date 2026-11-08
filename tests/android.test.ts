@@ -37,7 +37,7 @@ const app: LibraryApp = {
   },
 };
 
-function fakeChild(): ChildProcess {
+function fakeChild(autoClose = true): ChildProcess {
   const child = new EventEmitter() as ChildProcess;
   child.stderr = new EventEmitter() as ChildProcess["stderr"];
   child.stdout = new EventEmitter() as ChildProcess["stdout"];
@@ -51,6 +51,7 @@ function fakeChild(): ChildProcess {
   child.on("exit", (code, signal) => {
     exitCode = code;
     signalCode = signal || null;
+    if (autoClose) queueMicrotask(() => child.emit("close", code, signal));
   });
   child.kill = vi.fn((signal: NodeJS.Signals | number = "SIGTERM") => {
     queueMicrotask(() => child.emit("exit", null, signal));
@@ -1063,7 +1064,7 @@ describe("AndroidRuntime", () => {
     expect(status.issues.join("\n")).toContain("spawn adb ENOENT");
     expect(status.issues.join("\n")).toContain("退出代码：ENOENT");
   });
-  function nativeRuntimeFixture(reportError = vi.fn()) {
+  function nativeRuntimeFixture(reportError = vi.fn(), autoClose = true) {
     const environment = {
       APK_CHECKER_DISPLAY_MODE: "native",
       ANDROID_AVD_HOME: join(directory, "private-avds"),
@@ -1100,7 +1101,7 @@ describe("AndroidRuntime", () => {
     };
     processMocks.spawn.mockImplementation((_file, args) => {
       const target = {
-        child: fakeChild(),
+        child: fakeChild(autoClose),
         avd: args[args.indexOf("-avd") + 1],
         serial: `emulator-${args[args.indexOf("-port") + 1]}`,
         native: !args.includes("-no-window"),
@@ -1138,6 +1139,265 @@ describe("AndroidRuntime", () => {
     return { children, events, environment, reportError };
   }
 
+  const snapshotFailure = "qemu-system-aarch64: error while loading state for instance 0x0 of device 'goldfish_pipe'";
+
+  it.each(["stdout", "stderr"] as const)(
+    "cold boots once after the TV snapshot failure on %s, even when QEMU exits with code 0",
+    async (stream) => {
+      const fixture = nativeRuntimeFixture();
+      const spawnDevice = processMocks.spawn.getMockImplementation()!;
+      processMocks.spawn.mockImplementation((file, args, options) => {
+        const child = spawnDevice(file, args, options) as ChildProcess;
+        if (fixture.children.length === 1) queueMicrotask(() => {
+          child[stream]?.emit("data", snapshotFailure.slice(0, 42));
+          child[stream]?.emit("data", snapshotFailure.slice(42) + "\n");
+          child[stream]?.emit("data", "IMKCFRunLoopWakeUpReliable\n".repeat(500));
+          child.emit("exit", 0, null);
+        });
+        return child;
+      });
+      const progress = vi.fn();
+      await expect(runtime.install(app, apkPath, "tv", settings, progress)).resolves.toEqual({ avd: settings.tvAvd });
+      expect(fixture.children).toHaveLength(2);
+      expect(fixture.events).toEqual(["headless-spawn", "headless-exit", "headless-spawn"]);
+      expect(processMocks.spawn.mock.calls[0][1]).not.toContain("-no-snapshot-load");
+      expect(processMocks.spawn.mock.calls[1][1]).toContain("-no-snapshot-load");
+      for (const [, args, options] of processMocks.spawn.mock.calls) {
+        expect(args).toContain(settings.tvAvd);
+        expect(args).not.toContain("-wipe-data");
+        expect(options).toMatchObject({ env: expect.objectContaining(fixture.environment), stdio: ["ignore", "pipe", "pipe"] });
+      }
+      expect(progress).toHaveBeenCalledWith(expect.stringContaining("快照恢复失败"));
+      expect(fixture.reportError).not.toHaveBeenCalled();
+      expect(processMocks.execFile.mock.calls.filter((call) => call[1].includes("install"))).toHaveLength(1);
+    },
+  );
+
+  it("drains snapshot diagnostics arriving after the process exit event before deciding recovery", async () => {
+    const fixture = nativeRuntimeFixture(vi.fn(), false);
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      if (fixture.children.length === 1) queueMicrotask(() => {
+        child.emit("exit", 0, null);
+        // Let the startup poll observe exit before the final pipe data arrives.
+        setImmediate(() => {
+          child.stdout?.emit("data", snapshotFailure + "\n");
+          child.emit("close", 0, null);
+        });
+      });
+      return child;
+    });
+    await runtime.install(app, apkPath, "tv", settings, vi.fn());
+    expect(fixture.children).toHaveLength(2);
+    expect(fixture.reportError).not.toHaveBeenCalled();
+  });
+
+  it("stops after two attempts when cold boot also reports a snapshot restore failure", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      queueMicrotask(() => { child.stderr?.emit("data", snapshotFailure); child.emit("exit", 0, null); });
+      return child;
+    });
+    await expect(runtime.install(app, apkPath, "tv", settings, vi.fn())).rejects.toThrow("冷启动失败");
+    expect(fixture.children).toHaveLength(2);
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("install"))).toBe(false);
+  });
+
+  it("retains the snapshot cause if selecting a port for cold boot fails", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      queueMicrotask(() => { child.stderr?.emit("data", snapshotFailure); child.emit("exit", 0, null); });
+      return child;
+    });
+    const port = vi.spyOn(runtime as unknown as { freePort(): Promise<number> }, "freePort")
+      .mockResolvedValueOnce(5554).mockRejectedValueOnce(new Error("Port selection failed"));
+    try {
+      const error = await runtime.install(app, apkPath, "tv", settings, vi.fn()).catch((failure: Error) => failure);
+      expect((error as Error).message).toContain(snapshotFailure);
+      expect((error as Error).message).toContain("Port selection failed");
+      expect(fixture.children).toHaveLength(1);
+    } finally {
+      port.mockRestore();
+    }
+  });
+
+  it("stops a live process with a fatal snapshot restore error before cold booting", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      if (fixture.children.length === 1) queueMicrotask(() => child.stderr?.emit("data", snapshotFailure));
+      return child;
+    });
+    await runtime.install(app, apkPath, "tv", settings, vi.fn());
+    expect(fixture.events).toEqual(["headless-spawn", "headless-exit", "headless-spawn"]);
+    expect(processMocks.execFile.mock.calls.filter((call) => call[1].includes("kill"))).toHaveLength(1);
+    expect(fixture.reportError).not.toHaveBeenCalled();
+  });
+
+  it("keeps the first snapshot cause and both attempts' bounded diagnostics when cold boot fails", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      const first = fixture.children.length === 1;
+      queueMicrotask(() => {
+        if (first) {
+          // The fatal prefix is recognizable before its device name arrives.
+          child.stderr?.emit("data", snapshotFailure.slice(0, 76));
+          child.stderr?.emit("data", snapshotFailure.slice(76) + "\n");
+        } else child.stderr?.emit("data", "Second attempt: HVF unavailable\n");
+        child.stdout?.emit("data", (first ? "First stdout\n" : "Second stdout\n").repeat(500));
+        if (first) child.stderr?.emit("data", "IMKCFRunLoopWakeUpReliable\n".repeat(500));
+        child.emit("exit", first ? 0 : 1, null);
+      });
+      return child;
+    });
+    const error = await runtime.install(app, apkPath, "tv", settings, vi.fn()).catch((failure: Error) => failure);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain(snapshotFailure);
+    expect(message).toContain("退出代码：0");
+    expect(message).toContain("冷启动失败");
+    expect(message).toContain("Second attempt: HVF unavailable");
+    expect(message).toContain("First stdout");
+    expect(message).toContain("Second stdout");
+    expect(message.length).toBeLessThan(17_000);
+    expect(fixture.children).toHaveLength(2);
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("install"))).toBe(false);
+  });
+
+  it.each([false, true])("does not retry ordinary IMK/h264 output (process exits: %s)", async (exits) => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      queueMicrotask(() => {
+        child.stdout?.emit("data", "[h264] no frame!\n");
+        child.stderr?.emit("data", "IMKCFRunLoopWakeUpReliable\nTSM keyboard\n");
+        if (exits) child.emit("exit", 0, null);
+      });
+      return child;
+    });
+    const installing = runtime.install(app, apkPath, "tv", settings, vi.fn());
+    if (exits) await expect(installing).rejects.toThrow("退出代码：0");
+    else await expect(installing).resolves.toEqual({ avd: settings.tvAvd });
+    expect(fixture.children).toHaveLength(1);
+  });
+
+  it("retains ownership and refuses recovery when the failed snapshot process cannot be stopped", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      vi.mocked(child.kill).mockReturnValue(false);
+      queueMicrotask(() => child.stderr?.emit("data", snapshotFailure));
+      return child;
+    });
+    const exec = processMocks.execFile.getMockImplementation()!;
+    processMocks.execFile.mockImplementation((file, args, options, callback) => {
+      if (args.includes("emu") && args.includes("kill")) callback(new Error("console unavailable"), "", "");
+      else exec(file, args, options, callback);
+    });
+    vi.useFakeTimers();
+    const installing = runtime.install(app, apkPath, "tv", settings, vi.fn());
+    const rejected = expect(installing).rejects.toThrow("无法确认模拟器");
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("kill"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(6000);
+    await rejected;
+    expect(fixture.children).toHaveLength(1);
+    // A later cleanup still owns the original process and can stop it.
+    processMocks.execFile.mockImplementation(exec);
+    await runtime.dispose();
+    expect(fixture.children[0].child.exitCode).toBe(0);
+  });
+
+  it("does not retry when quitting while the snapshot process is stopping", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      queueMicrotask(() => child.stderr?.emit("data", snapshotFailure));
+      return child;
+    });
+    const exec = processMocks.execFile.getMockImplementation()!;
+    processMocks.execFile.mockImplementation((file, args, options, callback) => {
+      if (args.includes("emu") && args.includes("kill")) callback(null, "OK\n", "");
+      else exec(file, args, options, callback);
+    });
+    const installing = runtime.install(app, apkPath, "tv", settings, vi.fn());
+    const cancelled = expect(installing).rejects.toThrow("正在退出");
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("kill"))).toBe(true));
+    const stopping = runtime.dispose();
+    fixture.children[0].child.emit("exit", 0, null);
+    await cancelled;
+    await stopping;
+    expect(fixture.children).toHaveLength(1);
+  });
+
+  it("does not restart if the cold boot progress callback requests disposal", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      queueMicrotask(() => { child.stderr?.emit("data", snapshotFailure); child.emit("exit", 0, null); });
+      return child;
+    });
+    await expect(runtime.install(app, apkPath, "tv", settings, (message) => {
+      if (message.startsWith("快照恢复失败")) void runtime.dispose();
+    })).rejects.toThrow("正在退出");
+    expect(fixture.children).toHaveLength(1);
+  });
+
+  it("keeps external devices alive when waiting for their boot times out", async () => {
+    const normal = output;
+    output = (args) => args.includes("getprop") ? "0\n" : normal(args);
+    vi.useFakeTimers();
+    const installing = runtime.install(app, apkPath, "tv", settings, vi.fn());
+    const rejected = expect(installing).rejects.toThrow("已连接目标模拟器，等待 Android 完成启动");
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("getprop"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(180_000);
+    await rejected;
+    expect(processMocks.spawn).not.toHaveBeenCalled();
+    expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("kill"))).toBe(false);
+  });
+
+  it("includes the last boot phase, adb error and both output streams in a startup timeout", async () => {
+    const fixture = nativeRuntimeFixture();
+    const spawnDevice = processMocks.spawn.getMockImplementation()!;
+    processMocks.spawn.mockImplementation((file, args, options) => {
+      const child = spawnDevice(file, args, options) as ChildProcess;
+      queueMicrotask(() => {
+        child.stdout?.emit("data", "Guest still booting\n");
+        child.stderr?.emit("data", "Graphics warning\n");
+      });
+      return child;
+    });
+    const exec = processMocks.execFile.getMockImplementation()!;
+    processMocks.execFile.mockImplementation((file, args, options, callback) => {
+      if (args.includes("getprop")) callback(new Error("device offline"), "", "device offline");
+      else exec(file, args, options, callback);
+    });
+    vi.useFakeTimers();
+    const installing = runtime.install(app, apkPath, "tv", settings, vi.fn()).catch((error: Error) => error);
+    await vi.waitFor(() => expect(processMocks.execFile.mock.calls.some((call) => call[1].includes("getprop"))).toBe(true));
+    await vi.advanceTimersByTimeAsync(180_000);
+    const result = await installing;
+    expect(result).toBeInstanceOf(Error);
+    const message = (result as Error).message;
+    expect(message).toContain("已连接目标模拟器，等待 Android 完成启动");
+    expect(message).toContain("device offline");
+    expect(message).toContain("Guest still booting");
+    expect(message).toContain("Graphics warning");
+    expect(fixture.children).toHaveLength(1);
+    expect(fixture.children[0].child.exitCode).toBe(0);
+  });
+
   it("switches its installed headless device to a native Qt window only after the old process exits", async () => {
     const fixture = nativeRuntimeFixture();
     await runtime.install(app, apkPath, "phone", settings, vi.fn());
@@ -1165,6 +1425,7 @@ describe("AndroidRuntime", () => {
       "-qt-hide-window",
     );
     expect(processMocks.spawn.mock.calls[1][1]).not.toContain("-wipe-data");
+    expect(processMocks.spawn.mock.calls[1][1]).toContain("-no-snapshot-load");
     expect(processMocks.spawn.mock.calls[1][2]).toMatchObject({
       windowsHide: false,
       env: expect.objectContaining(fixture.environment),
@@ -1325,9 +1586,7 @@ describe("AndroidRuntime", () => {
     expect(progress).not.toHaveBeenCalledWith(
       "示例应用 已在模拟器原生窗口打开。",
     );
-    expect(fixture.reportError).toHaveBeenCalledWith(
-      expect.stringContaining("Qt platform initialization failed"),
-    );
+    expect(fixture.reportError).not.toHaveBeenCalled();
   });
 
   it("waits for an in-progress headless transition on quit and does not start its native replacement", async () => {
