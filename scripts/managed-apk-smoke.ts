@@ -21,10 +21,17 @@ import {
 import type { DeviceMode, LibraryApp, Settings } from "../src/shared/types";
 import { captureNativeHost, probeProtectedLogin, publishProbeDiagnostic } from "./login-smoke";
 import { probeHostKeyboard } from "./keyboard-smoke";
+import fixtures from "./managed-apk-fixtures.json";
 
 // Opt-in integration test: fresh private SDK, AVD and adb server. No SDK Manager,
 // host adb, pre-created emulator, fake process or rebuilt third-party APK is used.
 const mode = process.env.APK_TEST_MODE || "phone";
+const application = process.env.APK_TEST_APPLICATION || "maidong";
+const fixture = Object.hasOwn(fixtures, application)
+  ? fixtures[application as keyof typeof fixtures]
+  : undefined;
+const keyboardProbeEnabled = Boolean(fixture?.maidongProbes && process.env.APK_KEYBOARD_PROBE === "1");
+const loginProbeEnabled = Boolean(fixture?.maidongProbes && process.env.APK_LOGIN_PROBE === "1");
 const artifacts = path.resolve(
   process.env.APK_TEST_ARTIFACTS || `artifacts/managed-apk-${mode}`,
 );
@@ -32,10 +39,16 @@ const report: Record<string, unknown> = {
   startedAt: new Date().toISOString(),
   commit: process.env.GITHUB_SHA || null,
   mode,
+  application,
   status: "running",
   steps: [],
   runtimeErrors: [],
-  source: "https://gitee.com/yangyachao-X/maidong-ktv/releases/tag/2.1.8",
+  source: fixture?.source,
+  referenceNote: fixture?.referenceNote,
+  optionalProbes: {
+    keyboard: keyboardProbeEnabled ? "requested" : fixture?.maidongProbes ? "not-requested" : "not-applicable",
+    login: loginProbeEnabled ? "requested" : fixture?.maidongProbes ? "not-requested" : "not-applicable",
+  },
   scope:
     "Fresh managed-runtime preparation; embedded APK import; actual automatic boot, install, native emulator window, foreground/process survival, D-pad key injection and uninstall. No focus movement assertion, media playback, recording, audio latency or target macOS/Windows validation.",
 };
@@ -187,6 +200,65 @@ async function foreground(): Promise<unknown> {
   return { pid, resumedActivities: resumed };
 }
 
+async function captureLaunchDiagnostics(): Promise<void> {
+  if (!serial || !settings || !item || !fixture) return;
+  const targetSerial = serial;
+  const avd = mode === "phone" ? settings.phoneAvd : settings.tvAvd;
+  const diagnostics: Record<string, unknown> = {
+    capturedAt: new Date().toISOString(), application,
+    serial: targetSerial, avd, packageName: fixture.packageName,
+  };
+  const read = async (args: string[]) => {
+    try { return { args, stdout: await command(adb, ["-s", targetSerial, ...args], 10_000) }; }
+    catch (error) { return { args, error: String(error) }; }
+  };
+  try {
+    // Reconfirm the current serial after headless/native restart. Never query a
+    // recycled console port or a package outside this test's fixed fixture.
+    const identity = await read(["emu", "avd", "name"]);
+    diagnostics.identity = identity;
+    assert(identity.stdout?.split(/\r?\n/).map((line) => line.trim()).includes(avd),
+      "Private test AVD identity could not be reconfirmed; package diagnostics skipped");
+    assert.equal(item.packageName, fixture.packageName);
+    const currentUser = await read(["shell", "am", "get-current-user"]);
+    diagnostics.currentUser = currentUser;
+    const user = currentUser.stdout?.trim();
+    assert(user && /^\d+$/.test(user), "Current Android user is unknown; user-scoped queries skipped");
+    diagnostics.userUnlocked = await read(["shell", "cmd", "user", "is-user-unlocked", user]);
+    diagnostics.userState = await read(["shell", "am", "get-started-user-state", user]);
+    const packages = await read(["shell", "pm", "list", "packages", "--user", user, fixture.packageName]);
+    diagnostics.packages = packages;
+    diagnostics.exactPackagePresent = packages.stdout === undefined ? null
+      : packages.stdout.split(/\r?\n/).includes(`package:${fixture.packageName}`);
+    const launchers: Record<string, unknown> = {};
+    for (const category of ["android.intent.category.LAUNCHER", "android.intent.category.LEANBACK_LAUNCHER"]) {
+      const intent = ["--user", user, "-a", "android.intent.action.MAIN", "-c", category, "-p", fixture.packageName];
+      launchers[category] = {
+        resolved: await read(["shell", "cmd", "package", "resolve-activity", "--brief", ...intent]),
+        queried: await read(["shell", "cmd", "package", "query-activities", "--brief", ...intent]),
+      };
+    }
+    diagnostics.launchers = launchers;
+    const activities = await read(["shell", "dumpsys", "activity", "activities"]);
+    if (activities.stdout !== undefined) {
+      await writeFile(path.join(artifacts, "launch-activities.txt"), activities.stdout);
+      diagnostics.activityState = {
+        file: "launch-activities.txt",
+        lines: activities.stdout.split(/\r?\n/)
+          .filter((line) => /Display #|topResumedActivity|mResumedActivity|keyguard/i.test(line))
+          .slice(0, 60).map((line) => line.slice(0, 400)).join("\n"),
+      };
+    } else diagnostics.activityState = activities;
+  } catch (error) {
+    diagnostics.error = String(error);
+  }
+  await writeFile(path.join(artifacts, "launch-diagnostics.json"), JSON.stringify(diagnostics, null, 2));
+  // The full raw responses remain in the small diagnostic artifact. Keep the
+  // checks/log summary bounded when artifact storage is unavailable.
+  report.launchDiagnostics = JSON.parse(JSON.stringify(diagnostics,
+    (_key, value: unknown) => typeof value === "string" ? value.slice(0, 2000) : value));
+}
+
 async function privateRuntimeProcesses(): Promise<string[]> {
   if (process.platform !== "linux" || !root) return [];
   const output = await command("ps", ["-eo", "pid=,ppid=,args="]);
@@ -230,6 +302,7 @@ async function hostDiagnostics(): Promise<void> {
 async function run(): Promise<void> {
   await mkdir(artifacts, { recursive: true });
   try {
+    assert(fixture, `Unknown managed APK fixture: ${application}`);
     assert(
       mode === "phone" || mode === "tv",
       "APK_TEST_MODE must be phone or tv",
@@ -237,8 +310,7 @@ async function run(): Promise<void> {
     const deviceMode: DeviceMode = mode;
     const apk = process.env.APK_PATH;
     assert(apk, "Set APK_PATH to the original release APK");
-    const expectedHash =
-      "86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b";
+    const expectedHash = fixture.sha256;
     await step("Verify fixed original APK checksum", async () => {
       const hash = createHash("sha256");
       for await (const chunk of createReadStream(apk)) hash.update(chunk);
@@ -304,9 +376,9 @@ async function run(): Promise<void> {
       async () => {
         const result = await library!.importApk(apk);
         item = result.app;
-        assert.equal(item.packageName, "com.local.ktv");
-        assert.equal(item.versionName, "2.1.8");
-        assert.equal(item.versionCode, "11");
+        assert.equal(item.packageName, fixture.packageName);
+        assert.equal(item.versionName, fixture.versionName);
+        assert.equal(item.versionCode, fixture.versionCode);
         assert.equal(result.duplicate, false);
         assert.deepEqual(item.installed, {});
         assert((await library!.importApk(apk)).duplicate);
@@ -428,13 +500,10 @@ async function run(): Promise<void> {
       properties[property] = (await shell("getprop", property)).trim();
     report.deviceProperties = properties;
     await command(adb, ["-s", serial!, "logcat", "-c"]);
-    await step(
+    if (fixture.unattendedPermissions.length) await step(
       "Grant declared storage permissions for unattended startup",
       async () => {
-        const permissions = [
-          "android.permission.READ_EXTERNAL_STORAGE",
-          "android.permission.WRITE_EXTERNAL_STORAGE",
-        ];
+        const permissions = fixture.unattendedPermissions;
         for (const permission of permissions)
           await shell("pm", "grant", item!.packageName, permission);
         return { granted: permissions, microphonePermissionGranted: false };
@@ -483,7 +552,7 @@ async function run(): Promise<void> {
         };
       },
     );
-    if (process.env.APK_KEYBOARD_PROBE === "1") {
+    if (keyboardProbeEnabled) {
       try {
         report.keyboardProbe = await step(
           "Verify host keyboard and managed text input in public search without Enter",
@@ -500,9 +569,9 @@ async function run(): Promise<void> {
         fail(error, "Managed keyboard probe");
       }
     }
-    if (process.env.APK_LOGIN_PROBE === "1") {
+    if (loginProbeEnabled) {
       try {
-        if (process.env.APK_KEYBOARD_PROBE === "1")
+        if (keyboardProbeEnabled)
           await step("Reset test APK activity between independent UI probes", async () => {
             const previousForeground = await foreground().catch(String);
             await shell("am", "force-stop", item!.packageName);
@@ -559,6 +628,9 @@ async function run(): Promise<void> {
   } finally {
     await discoverDevice().catch((error) => {
       report.deviceDiscoveryError = String(error);
+    });
+    await captureLaunchDiagnostics().catch((error) => {
+      report.launchDiagnosticsError = String(error);
     });
     if (serial) {
       await screenshot("03-final-state.png").catch((error) => {
@@ -677,6 +749,12 @@ async function run(): Promise<void> {
       const login = report.loginProbe as Record<string, unknown> | undefined;
       const diagnosticData = {
         status: report.status,
+        application,
+        source: fixture?.source,
+        sha256: report.sha256,
+        referenceNote: fixture?.referenceNote,
+        optionalProbes: report.optionalProbes,
+        launchDiagnostics: report.launchDiagnostics,
         steps: (
           report.steps as { name: string; status: string; durationMs: number }[]
         ).map(({ name, status, durationMs }) => ({ name: name.slice(0, 55), status, durationMs })),

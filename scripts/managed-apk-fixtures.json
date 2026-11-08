@@ -1,0 +1,29 @@
+{
+  "maidong": {
+    "name": "Maidong KTV",
+    "source": "https://gitee.com/yangyachao-X/maidong-ktv/releases/tag/2.1.8",
+    "url": "https://gitee.com/yangyachao-X/maidong-ktv/releases/download/2.1.8/Maidong-KTV-2.1.8.apk",
+    "sha256": "86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b",
+    "packageName": "com.local.ktv",
+    "versionName": "2.1.8",
+    "versionCode": "11",
+    "unattendedPermissions": [
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE"
+    ],
+    "maidongProbes": true,
+    "referenceNote": "Fixed original public release used by the existing managed-runtime regression."
+  },
+  "vstv": {
+    "name": "VSTV",
+    "source": "https://github.com/vesaaa/vstv/releases/tag/v2.8.0",
+    "url": "https://github.com/vesaaa/vstv/releases/download/v2.8.0/vstv-2.8.0-arm.apk",
+    "sha256": "52582233d44b93e1745873320b206540711b6969656d5edd93936c608eada393",
+    "packageName": "com.vesaa.mytv",
+    "versionName": "2.8.0",
+    "versionCode": "200800099",
+    "unattendedPermissions": [],
+    "maidongProbes": false,
+    "referenceNote": "Official ARM reference release; the user's exact VSTV version is unknown. Test the unchanged ARM APK through the catalog image's native bridge on Linux x64."
+  }
+}

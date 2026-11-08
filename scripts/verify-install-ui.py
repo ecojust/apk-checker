@@ -21,7 +21,7 @@ fixture = r'''(() => {
       licenseAccepted:true, downloadBytes:{phone:1024,tv:2048}}
   };
   const f = window.fixture = {state, calls:[], holdInstall:false, holdPrepare:false,
-    nextInstallError:null, change:() => changed()};
+    nextInstallError:null, nextLaunchError:null, change:() => changed()};
   window.apkChecker = {
     getState:async()=>structuredClone(state), onProgress:()=>()=>{},
     onStateChanged:cb=>{changed=cb;return()=>{}},
@@ -38,7 +38,11 @@ fixture = r'''(() => {
         }
       });
     },
-    launchApp:async(id,mode)=>{f.calls.push({action:'launch',id,mode});return {ok:true}},
+    launchApp:async(id,mode)=>{
+      f.calls.push({action:'launch',id,mode});
+      const result=f.nextLaunchError?{ok:false,error:f.nextLaunchError}:{ok:true};
+      f.nextLaunchError=null; return result;
+    },
     uninstallApp:async(id,mode)=>{
       f.calls.push({action:'uninstall',id,mode});
       delete state.apps.find(a=>a.id===id).installed[mode]; return {ok:true};
@@ -210,6 +214,30 @@ with sync_playwright() as p:
     assert len(calls('install'))==installs_before
     goto('桌面');expect(card('备用','电视')).to_have_count(1);expect(card('备用','手机')).to_have_count(0)
     results.append('Cancelling environment preparation prevents follow-up installation and keeps the other mode card')
+
+    # Repair a missing installation without uninstalling or losing the selected mode.
+    page.evaluate('window.fixture.holdPrepare=false')
+    installs_before=len(calls('install'))
+    uninstalls_before=len(calls('uninstall'))
+    close_notice()
+    expect(page.get_by_text('从这里打开应用；电视系统桌面可能不会显示手机应用图标。',exact=True)).to_be_visible()
+    card('备用','电视').get_by_role('button',name=re.compile('更多操作$')).click()
+    expect(card('备用','电视').get_by_role('button',name='重新安装到手机（保留数据）',exact=True)).to_have_count(0)
+    card('备用','电视').get_by_role('button',name='重新安装到电视（保留数据）',exact=True).click()
+    expect(page.get_by_role('status')).to_contain_text('请从 APK Checker 的桌面打开')
+    assert len(calls('install'))==installs_before+1
+    assert calls('install')[-1]=={'action':'install','id':'spare','mode':'tv'}
+    assert len(calls('uninstall'))==uninstalls_before
+    expect(card('备用','电视')).to_have_count(1)
+    expect(card('备用','手机')).to_have_count(0)
+    results.append('Reinstall keeps the card mode, calls install once without uninstall, and explains the APK Checker launch entry')
+
+    page.evaluate("window.fixture.nextLaunchError='应用已安装，但未确认进入前台。当前仍是电视系统桌面。'")
+    card('备用','电视').get_by_role('button',name='打开',exact=True).click()
+    expect(page.get_by_role('alert')).to_contain_text('未确认进入前台')
+    expect(page.get_by_text('备用 已在独立窗口打开',exact=True)).to_have_count(0)
+    expect(card('备用','电视')).to_have_count(1)
+    results.append('A launch that stays on the Android home screen exposes its diagnostic and does not show an opened success notice')
     assert not errors, errors
     browser.close()
 print(json.dumps({'passed':results,'pageErrors':errors,'scope':'Chromium UI fixture only; no Android installation or native package claim'},ensure_ascii=False,indent=2))

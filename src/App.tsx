@@ -727,7 +727,7 @@ function App() {
       action === "prepare"
         ? `${modeNames[requestedMode]}模拟器已准备好`
         : action === "install"
-          ? `${app!.name} 已安装到${modeNames[requestedMode]}模拟器`
+          ? `${app!.name} 已安装到${modeNames[requestedMode]}模拟器，请从 APK Checker 的桌面打开`
           : action === "launch"
             ? `${app!.name} 已在独立窗口打开`
             : "应用已卸载";
@@ -895,7 +895,9 @@ function App() {
               </h1>
               <p>
                 {page === "desktop"
-                  ? "所有已安装的应用，随时点开，在独立窗口体验。"
+                  ? installedApps.some((entry) => entry.mode === "tv")
+                    ? "从这里打开应用；电视系统桌面可能不会显示手机应用图标。"
+                    : "所有已安装的应用，随时点开，在独立窗口体验。"
                   : page === "library"
                     ? "把 APK 放进来，让每个应用都有自己的位置。"
                     : "系统自动准备，应用自由体验。"}
@@ -1071,6 +1073,15 @@ function App() {
                           </button>
                           {openMenu === cardKey && (
                             <div className="app-menu" onClick={(event) => event.stopPropagation()}>
+                              {(cardMode ? [cardMode] : modes).map((deviceMode) => (
+                                <button key={`reinstall-${deviceMode}`} onClick={() => {
+                                  setOpenMenu(null);
+                                  requestManagedAction({ action: "install", mode: deviceMode, app });
+                                }}>
+                                  <RefreshCw size={15} />
+                                  重新安装到{modeNames[deviceMode]}（保留数据）
+                                </button>
+                              ))}
                               {(cardMode ? [cardMode] : modes).map((deviceMode) => (
                                 <button key={deviceMode} onClick={() => {
                                   setConfirmation({ type: "uninstall", app, mode: deviceMode });
@@ -1677,7 +1688,7 @@ function App() {
         <DeviceChoiceDialog
           title={deviceChoice.action === "install" ? `安装「${deviceChoice.app.name}」` : "选择输入文字的设备"}
           description={deviceChoice.action === "install"
-            ? "选择要安装到的设备。安装成功后，应用会显示在桌面并标注设备类型。"
+            ? "选择要安装到的设备。安装成功后，可在 APK Checker 的桌面点击打开，卡片会标注设备类型。"
             : "选择需要填写文字的模拟器，请先在对应窗口中选中输入框。"}
           action={deviceChoice.action}
           preferredMode={state.settings.defaultMode}

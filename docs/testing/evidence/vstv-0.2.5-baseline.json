@@ -1,0 +1,221 @@
+{
+  "source": "GitHub check-run annotations, three diagnostic chunks reassembled without changing their contents",
+  "runUrl": "https://github.com/ecojust/apk-checker/actions/runs/42497519047",
+  "commit": "8a1ca3264a7d8aee2d57384a6b6a82331fbe9324",
+  "productionVersion": "0.2.5",
+  "artifactId": 13624352004,
+  "screenshotsManuallyViewed": false,
+  "userMacVerified": false,
+  "summary": {
+    "status": "passed",
+    "application": "vstv",
+    "source": "https://github.com/vesaaa/vstv/releases/tag/v2.8.0",
+    "sha256": "52582233d44b93e1745873320b206540711b6969656d5edd93936c608eada393",
+    "referenceNote": "Official ARM reference release; the user's exact VSTV version is unknown. Test the unchanged ARM APK through the catalog image's native bridge on Linux x64.",
+    "optionalProbes": {
+      "keyboard": "not-applicable",
+      "login": "not-applicable"
+    },
+    "launchDiagnostics": {
+      "capturedAt": "2026-11-08T16:02:15.390Z",
+      "application": "vstv",
+      "serial": "emulator-5554",
+      "avd": "APKChecker_TV_36_x86_64",
+      "packageName": "com.vesaa.mytv",
+      "identity": {
+        "args": [
+          "emu",
+          "avd",
+          "name"
+        ],
+        "stdout": "APKChecker_TV_36_x86_64\r\nOK\r\n"
+      },
+      "currentUser": {
+        "args": [
+          "shell",
+          "am",
+          "get-current-user"
+        ],
+        "stdout": "0\n"
+      },
+      "userUnlocked": {
+        "args": [
+          "shell",
+          "cmd",
+          "user",
+          "is-user-unlocked",
+          "0"
+        ],
+        "error": "Error: adb: Unknown command: is-user-unlocked"
+      },
+      "userState": {
+        "args": [
+          "shell",
+          "am",
+          "get-started-user-state",
+          "0"
+        ],
+        "stdout": "RUNNING_UNLOCKED\n"
+      },
+      "packages": {
+        "args": [
+          "shell",
+          "pm",
+          "list",
+          "packages",
+          "--user",
+          "0",
+          "com.vesaa.mytv"
+        ],
+        "stdout": "package:com.vesaa.mytv\n"
+      },
+      "exactPackagePresent": true,
+      "launchers": {
+        "android.intent.category.LAUNCHER": {
+          "resolved": {
+            "args": [
+              "shell",
+              "cmd",
+              "package",
+              "resolve-activity",
+              "--brief",
+              "--user",
+              "0",
+              "-a",
+              "android.intent.action.MAIN",
+              "-c",
+              "android.intent.category.LAUNCHER",
+              "-p",
+              "com.vesaa.mytv"
+            ],
+            "stdout": "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.vesaa.mytv/.activities.MainActivity\n"
+          },
+          "queried": {
+            "args": [
+              "shell",
+              "cmd",
+              "package",
+              "query-activities",
+              "--brief",
+              "--user",
+              "0",
+              "-a",
+              "android.intent.action.MAIN",
+              "-c",
+              "android.intent.category.LAUNCHER",
+              "-p",
+              "com.vesaa.mytv"
+            ],
+            "stdout": "1 activities found:\n  Activity #0:\n    priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n    com.vesaa.mytv/.activities.MainActivity\n"
+          }
+        },
+        "android.intent.category.LEANBACK_LAUNCHER": {
+          "resolved": {
+            "args": [
+              "shell",
+              "cmd",
+              "package",
+              "resolve-activity",
+              "--brief",
+              "--user",
+              "0",
+              "-a",
+              "android.intent.action.MAIN",
+              "-c",
+              "android.intent.category.LEANBACK_LAUNCHER",
+              "-p",
+              "com.vesaa.mytv"
+            ],
+            "stdout": "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.vesaa.mytv/.activities.MainActivity\n"
+          },
+          "queried": {
+            "args": [
+              "shell",
+              "cmd",
+              "package",
+              "query-activities",
+              "--brief",
+              "--user",
+              "0",
+              "-a",
+              "android.intent.action.MAIN",
+              "-c",
+              "android.intent.category.LEANBACK_LAUNCHER",
+              "-p",
+              "com.vesaa.mytv"
+            ],
+            "stdout": "1 activities found:\n  Activity #0:\n    priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n    com.vesaa.mytv/.activities.MainActivity\n"
+          }
+        }
+      },
+      "activityState": {
+        "file": "launch-activities.txt",
+        "lines": "Display #0 (activities from top to bottom):\n    topResumedActivity=ActivityRecord{44623224 u0 com.vesaa.mytv/.activities.LeanbackActivity t5}\n    mKeyguardDrawComplete=true mWindowManagerDrawComplete=true\n    isKeyguardShowing=false\n  KeyguardController:\n    mKeyguardShowing=false\n    mKeyguardGoingAway=false\n   KeyguardShowing=false AodShowing=false KeyguardGoingAway=false DismissalRequested=false  Occluded=false DismissingKeyguardActivity=null TurnScreenOnActivity=null at display=0"
+      }
+    },
+    "steps": [
+      {
+        "name": "Verify fixed original APK checksum",
+        "status": "passed",
+        "durationMs": 15
+      },
+      {
+        "name": "Verify installer-provided core archives exist",
+        "status": "passed",
+        "durationMs": 2
+      },
+      {
+        "name": "Import APK with embedded parser before runtime preparat",
+        "status": "passed",
+        "durationMs": 127
+      },
+      {
+        "name": "Record first-use license and prepare managed engine/ima",
+        "status": "passed",
+        "durationMs": 52194
+      },
+      {
+        "name": "Automatically boot private AVD and install APK through ",
+        "status": "passed",
+        "durationMs": 57543
+      },
+      {
+        "name": "Launch APK in native emulator primary-display window",
+        "status": "passed",
+        "durationMs": 49259
+      },
+      {
+        "name": "Inject direction keys and verify APK survives in foregr",
+        "status": "passed",
+        "durationMs": 4208
+      },
+      {
+        "name": "Uninstall test APK and clear desktop marker",
+        "status": "passed",
+        "durationMs": 587
+      }
+    ],
+    "deviceProperties": {
+      "ro.build.version.sdk": "36",
+      "ro.build.fingerprint": "google/sdk_google_atv64_x86_64/emu64xa:16/BT2A.260319.001/15058170:user/dev-keys",
+      "ro.product.cpu.abilist": "x86_64,arm64-v8a",
+      "ro.dalvik.vm.native.bridge": "libndk_translation.so",
+      "ro.build.characteristics": "emulator"
+    },
+    "nativeDisplay": {
+      "windowType": "qtwindow",
+      "hostWindow": {
+        "id": 4194311,
+        "title": "Android Emulator - APKChecker_TV_36_x86_64:5554",
+        "x": 100,
+        "y": 100,
+        "width": 1280,
+        "height": 720
+      },
+      "capturedAt": "2026-11-08T16:02:06.019Z"
+    },
+    "privateShutdownWatchdogWaitMs": 1025,
+    "privateProcessesAfterShutdown": [],
+    "fullDiagnosticArtifact": "summary.json"
+  }
+}

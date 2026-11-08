@@ -3,6 +3,11 @@ name: Test self-contained Android runtime
 on:
   workflow_dispatch:
     inputs:
+      application:
+        description: Fixed original public APK reference release
+        type: choice
+        options: [maidong, vstv]
+        default: maidong
       mode:
         description: Managed Android environment to prepare and test from scratch
         type: choice
@@ -20,6 +25,8 @@ on:
     branches: [feat/desktop-android-emulator]
     paths:
       - scripts/managed-apk-smoke.ts
+      - scripts/managed-apk-fixtures.json
+      - scripts/download-managed-apk.mjs
       - scripts/login-smoke.ts
       - scripts/keyboard-smoke.ts
       - .github/workflows/managed-apk-smoke.yml
@@ -38,8 +45,9 @@ jobs:
         mode: ${{ fromJSON(inputs.mode == 'phone' && '["phone"]' || inputs.mode == 'tv' && '["tv"]' || '["phone","tv"]') }}
     env:
       APK_TEST_MODE: ${{ matrix.mode }}
-      APK_LOGIN_PROBE: ${{ github.event_name == 'push' && '1' || inputs.login_probe && '1' || '0' }}
-      APK_KEYBOARD_PROBE: ${{ github.event_name == 'push' && '1' || inputs.keyboard_probe && '1' || '0' }}
+      APK_TEST_APPLICATION: ${{ inputs.application || 'maidong' }}
+      APK_LOGIN_PROBE: ${{ inputs.application != 'vstv' && (github.event_name == 'push' || inputs.login_probe) && '1' || '0' }}
+      APK_KEYBOARD_PROBE: ${{ inputs.application != 'vstv' && (github.event_name == 'push' || inputs.keyboard_probe) && '1' || '0' }}
       # CI has no sound card. This preserves video while making no audio claim.
       SDL_AUDIODRIVER: dummy
     steps:
@@ -75,14 +83,11 @@ jobs:
           python3 -c 'import ctypes; ctypes.CDLL("libpulse.so.0")'
       - name: Prepare installer-provided core archives
         run: npm run runtime:prepare
-      - name: Download and verify original Maidong KTV release
+      - name: Download and verify fixed original APK release
         run: |
-          APK_PATH="$RUNNER_TEMP/Maidong-KTV-2.1.8.apk"
+          APK_PATH="$RUNNER_TEMP/managed-$APK_TEST_APPLICATION.apk"
           echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
-          curl --fail --location --retry 3 --retry-all-errors --connect-timeout 30 --max-time 300 \
-            'https://gitee.com/yangyachao-X/maidong-ktv/releases/download/2.1.8/Maidong-KTV-2.1.8.apk' \
-            --output "$APK_PATH"
-          printf '%s  %s\n' '86ef92ec8b1ac277eb68f28f3ff4fb421f7bc2a1e6093229a706d3aaa0310a3b' "$APK_PATH" | sha256sum --check --strict
+          node scripts/download-managed-apk.mjs "$APK_PATH"
       - name: Prepare and run private Android environment through application code
         run: xvfb-run -a -s '-screen 0 1920x1200x24' npx --no-install tsx scripts/managed-apk-smoke.ts
       - name: Publish readable test result
@@ -100,7 +105,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Managed-Maidong-2.1.8-${{ matrix.mode }}-report
+          name: Managed-${{ env.APK_TEST_APPLICATION }}-${{ matrix.mode }}-report
           path: artifacts/managed-apk-${{ matrix.mode }}/
           if-no-files-found: warn
           retention-days: 14
