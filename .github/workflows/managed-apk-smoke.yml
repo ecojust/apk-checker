@@ -6,7 +6,7 @@ on:
       application:
         description: Fixed original public APK reference release
         type: choice
-        options: [maidong, vstv]
+        options: [maidong, vstv, baby-fun-learning, ergeduoduo]
         default: maidong
       mode:
         description: Managed Android environment to prepare and test from scratch
@@ -46,8 +46,8 @@ jobs:
     env:
       APK_TEST_MODE: ${{ matrix.mode }}
       APK_TEST_APPLICATION: ${{ inputs.application || 'maidong' }}
-      APK_LOGIN_PROBE: ${{ inputs.application != 'vstv' && (github.event_name == 'push' || inputs.login_probe) && '1' || '0' }}
-      APK_KEYBOARD_PROBE: ${{ inputs.application != 'vstv' && (github.event_name == 'push' || inputs.keyboard_probe) && '1' || '0' }}
+      APK_LOGIN_PROBE: ${{ (inputs.application == 'maidong' || github.event_name == 'push') && (github.event_name == 'push' || inputs.login_probe) && '1' || '0' }}
+      APK_KEYBOARD_PROBE: ${{ (inputs.application == 'maidong' || github.event_name == 'push') && (github.event_name == 'push' || inputs.keyboard_probe) && '1' || '0' }}
       # CI has no sound card. This preserves video while making no audio claim.
       SDL_AUDIODRIVER: dummy
     steps:

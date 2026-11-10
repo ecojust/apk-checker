@@ -220,6 +220,23 @@ async function captureLaunchDiagnostics(): Promise<void> {
     assert(identity.stdout?.split(/\r?\n/).map((line) => line.trim()).includes(avd),
       "Private test AVD identity could not be reconfirmed; package diagnostics skipped");
     assert.equal(item.packageName, fixture.packageName);
+    // Read the dedicated crash buffer before slower package/window diagnostics.
+    // This is a fresh private AVD with a pinned APK and no user accounts.
+    const crash = await read(["logcat", "-b", "crash", "-d", "-v", "threadtime", "-t", "500"]);
+    if (crash.stdout !== undefined) {
+      await writeFile(path.join(artifacts, "logcat-crash.txt"), crash.stdout);
+      report.crashDiagnostics = { file: "logcat-crash.txt", text: crash.stdout.slice(-24_000),
+        truncated: crash.stdout.length > 24_000, packageName: fixture.packageName };
+    } else report.crashDiagnostics = crash;
+    // Also capture ABI/API on failed installation, before normal post-install
+    // recording can run. Do not infer device ABIs from the host architecture.
+    if (!report.deviceProperties) {
+      const properties: Record<string, unknown> = {};
+      for (const property of ["ro.build.version.sdk", "ro.build.fingerprint",
+        "ro.product.cpu.abilist", "ro.dalvik.vm.native.bridge", "ro.build.characteristics"])
+        properties[property] = await read(["shell", "getprop", property]);
+      report.failedInstallDeviceProperties = properties;
+    }
     const currentUser = await read(["shell", "am", "get-current-user"]);
     diagnostics.currentUser = currentUser;
     const user = currentUser.stdout?.trim();
@@ -759,6 +776,7 @@ async function run(): Promise<void> {
           report.steps as { name: string; status: string; durationMs: number }[]
         ).map(({ name, status, durationMs }) => ({ name: name.slice(0, 55), status, durationMs })),
         deviceProperties: report.deviceProperties,
+        failedInstallDeviceProperties: report.failedInstallDeviceProperties,
         nativeDisplay: report.nativeDisplay,
         keyboardProbe: keyboard && { status: keyboard.status },
         loginProbe: login && { status: login.status,
@@ -780,6 +798,7 @@ async function run(): Promise<void> {
         fullDiagnosticArtifact: "summary.json",
       };
       publishProbeDiagnostic(`Managed ${mode} test stages`, diagnosticData);
+      if (report.crashDiagnostics) publishProbeDiagnostic(`Managed ${mode} crash buffer`, report.crashDiagnostics);
     }
   }
 }
