@@ -1,0 +1,25 @@
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 13762928805,
+      "node_id": "MDg6QXJ0aWZhY3QxMzc2MjkyODgwNQ==",
+      "name": "Managed-baby-fun-learning-tv-report",
+      "size_in_bytes": 343703,
+      "url": "https://api.github.com/repos/ecojust/apk-checker/actions/artifacts/13762928805",
+      "archive_download_url": "https://api.github.com/repos/ecojust/apk-checker/actions/artifacts/13762928805/zip",
+      "expired": false,
+      "digest": "sha256:e94c4f557ff623d74a8da6ea9abe3d6a68780cb63632c2b5c0a454637925a588",
+      "created_at": "2026-11-10T12:18:56Z",
+      "updated_at": "2026-11-10T12:18:56Z",
+      "expires_at": "2026-11-24T12:18:55Z",
+      "workflow_run": {
+        "id": 42814114176,
+        "repository_id": 1447016122,
+        "head_repository_id": 1447016122,
+        "head_branch": "fix/education-apk-diagnostics",
+        "head_sha": "d864145a7637a6501e7e282b48d599364d771410"
+      }
+    }
+  ]
+}

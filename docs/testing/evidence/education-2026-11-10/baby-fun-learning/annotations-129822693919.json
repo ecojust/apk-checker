@@ -1,0 +1,86 @@
+[
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 2,
+    "start_column": null,
+    "end_line": 2,
+    "end_column": null,
+    "annotation_level": "warning",
+    "title": "",
+    "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 420,
+    "start_column": null,
+    "end_line": 420,
+    "end_column": null,
+    "annotation_level": "failure",
+    "title": "",
+    "message": "Process completed with exit code 1.",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 419,
+    "start_column": null,
+    "end_line": 419,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv crash buffer",
+    "message": "{\"file\":\"logcat-crash.txt\",\"text\":\"--------- beginning of crash\\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: FATAL EXCEPTION: Thread-6\\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: Process: com.wn31.cuteSpark, PID: 1490\\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'com.wn31.mainPage.models.MainPageData com.wn31.mainPage.models.AllJsonData.getChildrenAllVideo()' on a null object reference\\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: \\tat com.wn31.util.AndroidUtil.noBoxParseJson(AndroidUtil.java:22)\\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: \\tat l9.b.run(R8$$SyntheticClass:13)\\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: \\tat java.lang.Thread.run(Thread.java:1119)\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: FATAL EXCEPTION: Thread-7\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: Process: com.wn31.cuteSpark, PID: 1490\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'java.util.List com.wn31.util.UpdateManager$ReleaseMetadataJson.getElements()' on a null object reference\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \\tat com.wn31.util.UpdateManager.getRemoteVersionCode(UpdateManager.java:3)\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \\tat com.wn31.util.UpdateManager.lambda$update$0(UpdateManager.java:2)\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \\tat com.wn31.util.UpdateManager.a(Unknown Source:0)\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \\tat androidx.appcompat.widget.n0.run(Unknown Source:14)\\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \\tat java.lang.Thread.run(Thread.java:1119)\\n\",\"truncated\":false,\"packageName\":\"com.wn31.cuteSpark\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 418,
+    "start_column": null,
+    "end_line": 418,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv test stages",
+    "message": "{\"type\":\"probe-diagnostic-fragment\",\"diagnosticId\":\"Managed tv test stages:1794313134754\",\"title\":\"Managed tv test stages\",\"index\":2,\"total\":3,\"dataBase64Chunk\":\"c3Nlc0FmdGVyU2h1dGRvd24iOltdLCJmdWxsRGlhZ25vc3RpY0FydGlmYWN0Ijoic3VtbWFyeS5qc29uIn0=\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 417,
+    "start_column": null,
+    "end_line": 417,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv test stages",
+    "message": "{\"type\":\"probe-diagnostic-fragment\",\"diagnosticId\":\"Managed tv test stages:1794313134754\",\"title\":\"Managed tv test stages\",\"index\":1,\"total\":3,\"dataBase64Chunk\":\"LkxFQU5CQUNLX0xBVU5DSEVSIiwiLXAiLCJjb20ud24zMS5jdXRlU3BhcmsiXSwic3Rkb3V0IjoiTm8gYWN0aXZpdHkgZm91bmRcbiJ9LCJxdWVyaWVkIjp7ImFyZ3MiOlsic2hlbGwiLCJjbWQiLCJwYWNrYWdlIiwicXVlcnktYWN0aXZpdGllcyIsIi0tYnJpZWYiLCItLXVzZXIiLCIwIiwiLWEiLCJhbmRyb2lkLmludGVudC5hY3Rpb24uTUFJTiIsIi1jIiwiYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuTEVBTkJBQ0tfTEFVTkNIRVIiLCItcCIsImNvbS53bjMxLmN1dGVTcGFyayJdLCJzdGRvdXQiOiJObyBhY3Rpdml0aWVzIGZvdW5kXG4ifX19LCJhY3Rpdml0eVN0YXRlIjp7ImZpbGUiOiJsYXVuY2gtYWN0aXZpdGllcy50eHQiLCJsaW5lcyI6IkRpc3BsYXkgIzAgKGFjdGl2aXRpZXMgZnJvbSB0b3AgdG8gYm90dG9tKTpcbiAgICAgIHRvcFJlc3VtZWRBY3Rpdml0eT1BY3Rpdml0eVJlY29yZHsxMDUyNjI3NzEgdTAgY29tLmdvb2dsZS5hbmRyb2lkLnR2bGF1bmNoZXIvLk1haW5BY3Rpdml0eSB0NH1cbiAgICBtS2V5Z3VhcmREcmF3Q29tcGxldGU9dHJ1ZSBtV2luZG93TWFuYWdlckRyYXdDb21wbGV0ZT10cnVlXG4gICAgaXNLZXlndWFyZFNob3dpbmc9ZmFsc2VcbiAgS2V5Z3VhcmRDb250cm9sbGVyOlxuICAgIG1LZXlndWFyZFNob3dpbmc9ZmFsc2VcbiAgICBtS2V5Z3VhcmRHb2luZ0F3YXk9ZmFsc2VcbiAgIEtleWd1YXJkU2hvd2luZz1mYWxzZSBBb2RTaG93aW5nPWZhbHNlIEtleWd1YXJkR29pbmdBd2F5PWZhbHNlIERpc21pc3NhbFJlcXVlc3RlZD1mYWxzZSAgT2NjbHVkZWQ9ZmFsc2UgRGlzbWlzc2luZ0tleWd1YXJkQWN0aXZpdHk9bnVsbCBUdXJuU2NyZWVuT25BY3Rpdml0eT1udWxsIGF0IGRpc3BsYXk9MCJ9fSwic3RlcHMiOlt7Im5hbWUiOiJWZXJpZnkgZml4ZWQgb3JpZ2luYWwgQVBLIGNoZWNrc3VtIiwic3RhdHVzIjoicGFzc2VkIiwiZHVyYXRpb25NcyI6NDN9LHsibmFtZSI6IlZlcmlmeSBpbnN0YWxsZXItcHJvdmlkZWQgY29yZSBhcmNoaXZlcyBleGlzdCIsInN0YXR1cyI6InBhc3NlZCIsImR1cmF0aW9uTXMiOjB9LHsibmFtZSI6IkltcG9ydCBBUEsgd2l0aCBlbWJlZGRlZCBwYXJzZXIgYmVmb3JlIHJ1bnRpbWUgcHJlcGFyYXQiLCJzdGF0dXMiOiJwYXNzZWQiLCJkdXJhdGlvbk1zIjo1NjR9LHsibmFtZSI6IlJlY29yZCBmaXJzdC11c2UgbGljZW5zZSBhbmQgcHJlcGFyZSBtYW5hZ2VkIGVuZ2luZS9pbWEiLCJzdGF0dXMiOiJwYXNzZWQiLCJkdXJhdGlvbk1zIjo1NTcyOX0seyJuYW1lIjoiQXV0b21hdGljYWxseSBib290IHByaXZhdGUgQVZEIGFuZCBpbnN0YWxsIEFQSyB0aHJvdWdoICIsInN0YXR1cyI6InBhc3NlZCIsImR1cmF0aW9uTXMiOjQ5MjMzfSx7Im5hbWUiOiJMYXVuY2ggQVBLIGluIG5hdGl2ZSBlbXVsYXRvciBwcmltYXJ5LWRpc3BsYXkgd2luZG93Iiwic3RhdHVzIjoiZmFpbGVkIiwiZHVyYXRpb25NcyI6NTExOTF9LHsibmFtZSI6IlVuaW5zdGFsbCB0ZXN0IEFQSyBhbmQgY2xlYXIgZGVza3RvcCBtYXJrZXIiLCJzdGF0dXMiOiJwYXNzZWQiLCJkdXJhdGlvbk1zIjo0MzN9XSwiZGV2aWNlUHJvcGVydGllcyI6eyJyby5idWlsZC52ZXJzaW9uLnNkayI6IjM2Iiwicm8uYnVpbGQuZmluZ2VycHJpbnQiOiJnb29nbGUvc2RrX2dvb2dsZV9hdHY2NF94ODZfNjQvZW11NjR4YToxNi9CVDJBLjI2MDMxOS4wMDEvMTUwNTgxNzA6dXNlci9kZXYta2V5cyIsInJvLnByb2R1Y3QuY3B1LmFiaWxpc3QiOiJ4ODZfNjQsYXJtNjQtdjhhIiwicm8uZGFsdmlrLnZtLm5hdGl2ZS5icmlkZ2UiOiJsaWJuZGtfdHJhbnNsYXRpb24uc28iLCJyby5idWlsZC5jaGFyYWN0ZXJpc3RpY3MiOiJlbXVsYXRvciJ9LCJuYXRpdmVEaXNwbGF5Ijp7IndpbmRvd1R5cGUiOiJxdHdpbmRvdyIsImhvc3RXaW5kb3ciOnsiaWQiOjQxOTQzMTEsInRpdGxlIjoiQW5kcm9pZCBFbXVsYXRvciAtIEFQS0NoZWNrZXJfVFZfMzZfeDg2XzY0OjU1NTQiLCJ4IjoxMDAsInkiOjEwMCwid2lkdGgiOjEyODAsImhlaWdodCI6NzIwfSwiY2FwdHVyZWRBdCI6IjIwMjYtMTEtMTBUMTI6MTg6MjcuNjE4WiJ9LCJwcml2YXRlU2h1dGRvd25XYXRjaGRvZ1dhaXRNcyI6MTAxNSwicHJpdmF0ZVByb2Nl\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 416,
+    "start_column": null,
+    "end_line": 416,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv test stages",
+    "message": "{\"type\":\"probe-diagnostic-fragment\",\"diagnosticId\":\"Managed tv test stages:1794313134754\",\"title\":\"Managed tv test stages\",\"index\":0,\"total\":3,\"dataBase64Chunk\":\"eyJzdGF0dXMiOiJmYWlsZWQiLCJhcHBsaWNhdGlvbiI6ImJhYnktZnVuLWxlYXJuaW5nIiwic291cmNlIjoiaHR0cHM6Ly9naXRodWIuY29tL2Vjb2p1c3QvcHVyZVRWL3RyZWUvNmEyZjg2NWFlZjkzMGVjZWE4NjhhZDE4NWZiYTZhZDU5ZjgyNGI4MC9mb3JrL2VkdWNhdGlvbi9iYWJ5LWZ1bi1sZWFybmluZy8iLCJzaGEyNTYiOiI0MWVhOGE0NGQzZmViZWNlNjI4NGIxMGMwNWZmN2RkZDA4ZGJkOGY1NTU1MjUzZmZlNjYxZGM0MGEyYzY3MTIxIiwicmVmZXJlbmNlTm90ZSI6IlVzZXIgcmVwb3J0cyBhbiBpbW1lZGlhdGUgY3Jhc2ggb24gQXBwbGUgU2lsaWNvbiBUVi4gTGludXggeDg2XzY0IEFQSSAzNiBpcyBhIGNvbXBhcmlzb24gb25seSwgbm90IHZhbGlkYXRpb24gb24gbWFjT1MgQVJNNjQuIiwib3B0aW9uYWxQcm9iZXMiOnsia2V5Ym9hcmQiOiJub3QtYXBwbGljYWJsZSIsImxvZ2luIjoibm90LWFwcGxpY2FibGUifSwibGF1bmNoRGlhZ25vc3RpY3MiOnsiY2FwdHVyZWRBdCI6IjIwMjYtMTEtMTBUMTI6MTg6MzEuOTMwWiIsImFwcGxpY2F0aW9uIjoiYmFieS1mdW4tbGVhcm5pbmciLCJzZXJpYWwiOiJlbXVsYXRvci01NTU0IiwiYXZkIjoiQVBLQ2hlY2tlcl9UVl8zNl94ODZfNjQiLCJwYWNrYWdlTmFtZSI6ImNvbS53bjMxLmN1dGVTcGFyayIsImlkZW50aXR5Ijp7ImFyZ3MiOlsiZW11IiwiYXZkIiwibmFtZSJdLCJzdGRvdXQiOiJBUEtDaGVja2VyX1RWXzM2X3g4Nl82NFxyXG5PS1xyXG4ifSwiY3VycmVudFVzZXIiOnsiYXJncyI6WyJzaGVsbCIsImFtIiwiZ2V0LWN1cnJlbnQtdXNlciJdLCJzdGRvdXQiOiIwXG4ifSwidXNlclVubG9ja2VkIjp7ImFyZ3MiOlsic2hlbGwiLCJjbWQiLCJ1c2VyIiwiaXMtdXNlci11bmxvY2tlZCIsIjAiXSwiZXJyb3IiOiJFcnJvcjogYWRiOiBVbmtub3duIGNvbW1hbmQ6IGlzLXVzZXItdW5sb2NrZWQifSwidXNlclN0YXRlIjp7ImFyZ3MiOlsic2hlbGwiLCJhbSIsImdldC1zdGFydGVkLXVzZXItc3RhdGUiLCIwIl0sInN0ZG91dCI6IlJVTk5JTkdfVU5MT0NLRURcbiJ9LCJwYWNrYWdlcyI6eyJhcmdzIjpbInNoZWxsIiwicG0iLCJsaXN0IiwicGFja2FnZXMiLCItLXVzZXIiLCIwIiwiY29tLnduMzEuY3V0ZVNwYXJrIl0sInN0ZG91dCI6InBhY2thZ2U6Y29tLnduMzEuY3V0ZVNwYXJrXG4ifSwiZXhhY3RQYWNrYWdlUHJlc2VudCI6dHJ1ZSwibGF1bmNoZXJzIjp7ImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5LkxBVU5DSEVSIjp7InJlc29sdmVkIjp7ImFyZ3MiOlsic2hlbGwiLCJjbWQiLCJwYWNrYWdlIiwicmVzb2x2ZS1hY3Rpdml0eSIsIi0tYnJpZWYiLCItLXVzZXIiLCIwIiwiLWEiLCJhbmRyb2lkLmludGVudC5hY3Rpb24uTUFJTiIsIi1jIiwiYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuTEFVTkNIRVIiLCItcCIsImNvbS53bjMxLmN1dGVTcGFyayJdLCJzdGRvdXQiOiJwcmlvcml0eT0wIHByZWZlcnJlZE9yZGVyPTAgbWF0Y2g9MHgxMDgwMDAgc3BlY2lmaWNJbmRleD0tMSBpc0RlZmF1bHQ9ZmFsc2VcbmNvbS53bjMxLmN1dGVTcGFyay8uSG9tZUFjdGl2aXR5XG4ifSwicXVlcmllZCI6eyJhcmdzIjpbInNoZWxsIiwiY21kIiwicGFja2FnZSIsInF1ZXJ5LWFjdGl2aXRpZXMiLCItLWJyaWVmIiwiLS11c2VyIiwiMCIsIi1hIiwiYW5kcm9pZC5pbnRlbnQuYWN0aW9uLk1BSU4iLCItYyIsImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5LkxBVU5DSEVSIiwiLXAiLCJjb20ud24zMS5jdXRlU3BhcmsiXSwic3Rkb3V0IjoiMSBhY3Rpdml0aWVzIGZvdW5kOlxuICBBY3Rpdml0eSAjMDpcbiAgICBwcmlvcml0eT0wIHByZWZlcnJlZE9yZGVyPTAgbWF0Y2g9MHgxMDgwMDAgc3BlY2lmaWNJbmRleD0tMSBpc0RlZmF1bHQ9ZmFsc2VcbiAgICBjb20ud24zMS5jdXRlU3BhcmsvLkhvbWVBY3Rpdml0eVxuIn19LCJhbmRyb2lkLmludGVudC5jYXRlZ29yeS5MRUFOQkFDS19MQVVOQ0hFUiI6eyJyZXNvbHZlZCI6eyJhcmdzIjpbInNoZWxsIiwiY21kIiwicGFja2FnZSIsInJlc29sdmUtYWN0aXZpdHkiLCItLWJyaWVmIiwiLS11c2VyIiwiMCIsIi1hIiwiYW5kcm9pZC5pbnRlbnQuYWN0aW9uLk1BSU4iLCItYyIsImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 38,
+    "start_column": null,
+    "end_line": 38,
+    "end_column": null,
+    "annotation_level": "failure",
+    "title": "Managed APK smoke test",
+    "message": "adb: Command failed: /tmp/apk-checker-managed-smoke-KhJcxx/managed-runtime/sdk/platform-tools/adb -s emulator-5554 shell pidof com.wn31.cuteSpark",
+    "raw_details": ""
+  }
+]

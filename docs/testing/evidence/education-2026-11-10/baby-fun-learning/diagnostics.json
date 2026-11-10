@@ -1,0 +1,221 @@
+[
+  {
+    "title": "Managed tv crash buffer",
+    "data": {
+      "file": "logcat-crash.txt",
+      "text": "--------- beginning of crash\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: FATAL EXCEPTION: Thread-6\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: Process: com.wn31.cuteSpark, PID: 1490\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'com.wn31.mainPage.models.MainPageData com.wn31.mainPage.models.AllJsonData.getChildrenAllVideo()' on a null object reference\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: \tat com.wn31.util.AndroidUtil.noBoxParseJson(AndroidUtil.java:22)\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: \tat l9.b.run(R8$$SyntheticClass:13)\n11-10 12:18:21.424  1490  1746 E AndroidRuntime: \tat java.lang.Thread.run(Thread.java:1119)\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: FATAL EXCEPTION: Thread-7\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: Process: com.wn31.cuteSpark, PID: 1490\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'java.util.List com.wn31.util.UpdateManager$ReleaseMetadataJson.getElements()' on a null object reference\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \tat com.wn31.util.UpdateManager.getRemoteVersionCode(UpdateManager.java:3)\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \tat com.wn31.util.UpdateManager.lambda$update$0(UpdateManager.java:2)\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \tat com.wn31.util.UpdateManager.a(Unknown Source:0)\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \tat androidx.appcompat.widget.n0.run(Unknown Source:14)\n11-10 12:18:21.427  1490  1748 E AndroidRuntime: \tat java.lang.Thread.run(Thread.java:1119)\n",
+      "truncated": false,
+      "packageName": "com.wn31.cuteSpark"
+    }
+  },
+  {
+    "title": "Managed tv test stages",
+    "data": {
+      "status": "failed",
+      "application": "baby-fun-learning",
+      "source": "https://github.com/ecojust/pureTV/tree/6a2f865aef930ecea868ad185fba6ad59f824b80/fork/education/baby-fun-learning/",
+      "sha256": "41ea8a44d3febece6284b10c05ff7ddd08dbd8f5555253ffe661dc40a2c67121",
+      "referenceNote": "User reports an immediate crash on Apple Silicon TV. Linux x86_64 API 36 is a comparison only, not validation on macOS ARM64.",
+      "optionalProbes": {
+        "keyboard": "not-applicable",
+        "login": "not-applicable"
+      },
+      "launchDiagnostics": {
+        "capturedAt": "2026-11-10T12:18:31.930Z",
+        "application": "baby-fun-learning",
+        "serial": "emulator-5554",
+        "avd": "APKChecker_TV_36_x86_64",
+        "packageName": "com.wn31.cuteSpark",
+        "identity": {
+          "args": [
+            "emu",
+            "avd",
+            "name"
+          ],
+          "stdout": "APKChecker_TV_36_x86_64\r\nOK\r\n"
+        },
+        "currentUser": {
+          "args": [
+            "shell",
+            "am",
+            "get-current-user"
+          ],
+          "stdout": "0\n"
+        },
+        "userUnlocked": {
+          "args": [
+            "shell",
+            "cmd",
+            "user",
+            "is-user-unlocked",
+            "0"
+          ],
+          "error": "Error: adb: Unknown command: is-user-unlocked"
+        },
+        "userState": {
+          "args": [
+            "shell",
+            "am",
+            "get-started-user-state",
+            "0"
+          ],
+          "stdout": "RUNNING_UNLOCKED\n"
+        },
+        "packages": {
+          "args": [
+            "shell",
+            "pm",
+            "list",
+            "packages",
+            "--user",
+            "0",
+            "com.wn31.cuteSpark"
+          ],
+          "stdout": "package:com.wn31.cuteSpark\n"
+        },
+        "exactPackagePresent": true,
+        "launchers": {
+          "android.intent.category.LAUNCHER": {
+            "resolved": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                "com.wn31.cuteSpark"
+              ],
+              "stdout": "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.wn31.cuteSpark/.HomeActivity\n"
+            },
+            "queried": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "query-activities",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                "com.wn31.cuteSpark"
+              ],
+              "stdout": "1 activities found:\n  Activity #0:\n    priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n    com.wn31.cuteSpark/.HomeActivity\n"
+            }
+          },
+          "android.intent.category.LEANBACK_LAUNCHER": {
+            "resolved": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LEANBACK_LAUNCHER",
+                "-p",
+                "com.wn31.cuteSpark"
+              ],
+              "stdout": "No activity found\n"
+            },
+            "queried": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "query-activities",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LEANBACK_LAUNCHER",
+                "-p",
+                "com.wn31.cuteSpark"
+              ],
+              "stdout": "No activities found\n"
+            }
+          }
+        },
+        "activityState": {
+          "file": "launch-activities.txt",
+          "lines": "Display #0 (activities from top to bottom):\n      topResumedActivity=ActivityRecord{105262771 u0 com.google.android.tvlauncher/.MainActivity t4}\n    mKeyguardDrawComplete=true mWindowManagerDrawComplete=true\n    isKeyguardShowing=false\n  KeyguardController:\n    mKeyguardShowing=false\n    mKeyguardGoingAway=false\n   KeyguardShowing=false AodShowing=false KeyguardGoingAway=false DismissalRequested=false  Occluded=false DismissingKeyguardActivity=null TurnScreenOnActivity=null at display=0"
+        }
+      },
+      "steps": [
+        {
+          "name": "Verify fixed original APK checksum",
+          "status": "passed",
+          "durationMs": 43
+        },
+        {
+          "name": "Verify installer-provided core archives exist",
+          "status": "passed",
+          "durationMs": 0
+        },
+        {
+          "name": "Import APK with embedded parser before runtime preparat",
+          "status": "passed",
+          "durationMs": 564
+        },
+        {
+          "name": "Record first-use license and prepare managed engine/ima",
+          "status": "passed",
+          "durationMs": 55729
+        },
+        {
+          "name": "Automatically boot private AVD and install APK through ",
+          "status": "passed",
+          "durationMs": 49233
+        },
+        {
+          "name": "Launch APK in native emulator primary-display window",
+          "status": "failed",
+          "durationMs": 51191
+        },
+        {
+          "name": "Uninstall test APK and clear desktop marker",
+          "status": "passed",
+          "durationMs": 433
+        }
+      ],
+      "deviceProperties": {
+        "ro.build.version.sdk": "36",
+        "ro.build.fingerprint": "google/sdk_google_atv64_x86_64/emu64xa:16/BT2A.260319.001/15058170:user/dev-keys",
+        "ro.product.cpu.abilist": "x86_64,arm64-v8a",
+        "ro.dalvik.vm.native.bridge": "libndk_translation.so",
+        "ro.build.characteristics": "emulator"
+      },
+      "nativeDisplay": {
+        "windowType": "qtwindow",
+        "hostWindow": {
+          "id": 4194311,
+          "title": "Android Emulator - APKChecker_TV_36_x86_64:5554",
+          "x": 100,
+          "y": 100,
+          "width": 1280,
+          "height": 720
+        },
+        "capturedAt": "2026-11-10T12:18:27.618Z"
+      },
+      "privateShutdownWatchdogWaitMs": 1015,
+      "privateProcessesAfterShutdown": [],
+      "fullDiagnosticArtifact": "summary.json"
+    }
+  }
+]

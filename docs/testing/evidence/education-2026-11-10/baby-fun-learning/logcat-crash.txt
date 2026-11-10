@@ -1,0 +1,15 @@
+--------- beginning of crash
+11-10 12:18:21.424  1490  1746 E AndroidRuntime: FATAL EXCEPTION: Thread-6
+11-10 12:18:21.424  1490  1746 E AndroidRuntime: Process: com.wn31.cuteSpark, PID: 1490
+11-10 12:18:21.424  1490  1746 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'com.wn31.mainPage.models.MainPageData com.wn31.mainPage.models.AllJsonData.getChildrenAllVideo()' on a null object reference
+11-10 12:18:21.424  1490  1746 E AndroidRuntime: 	at com.wn31.util.AndroidUtil.noBoxParseJson(AndroidUtil.java:22)
+11-10 12:18:21.424  1490  1746 E AndroidRuntime: 	at l9.b.run(R8$$SyntheticClass:13)
+11-10 12:18:21.424  1490  1746 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1119)
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: FATAL EXCEPTION: Thread-7
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: Process: com.wn31.cuteSpark, PID: 1490
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: java.lang.NullPointerException: Attempt to invoke virtual method 'java.util.List com.wn31.util.UpdateManager$ReleaseMetadataJson.getElements()' on a null object reference
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: 	at com.wn31.util.UpdateManager.getRemoteVersionCode(UpdateManager.java:3)
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: 	at com.wn31.util.UpdateManager.lambda$update$0(UpdateManager.java:2)
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: 	at com.wn31.util.UpdateManager.a(Unknown Source:0)
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: 	at androidx.appcompat.widget.n0.run(Unknown Source:14)
+11-10 12:18:21.427  1490  1748 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1119)

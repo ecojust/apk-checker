@@ -1,0 +1,74 @@
+[
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 2,
+    "start_column": null,
+    "end_line": 2,
+    "end_column": null,
+    "annotation_level": "warning",
+    "title": "",
+    "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 426,
+    "start_column": null,
+    "end_line": 426,
+    "end_column": null,
+    "annotation_level": "failure",
+    "title": "",
+    "message": "Process completed with exit code 1.",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 425,
+    "start_column": null,
+    "end_line": 425,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv crash buffer",
+    "message": "{\"file\":\"logcat-crash.txt\",\"text\":\"\",\"truncated\":false,\"packageName\":\"com.duoduo.child.story4tv\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 424,
+    "start_column": null,
+    "end_line": 424,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv test stages",
+    "message": "{\"type\":\"probe-diagnostic-fragment\",\"diagnosticId\":\"Managed tv test stages:1794313079118\",\"title\":\"Managed tv test stages\",\"index\":1,\"total\":2,\"dataBase64Chunk\":\"TiIsIi1jIiwiYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuTEVBTkJBQ0tfTEFVTkNIRVIiLCItcCIsImNvbS5kdW9kdW8uY2hpbGQuc3Rvcnk0dHYiXSwic3Rkb3V0IjoiTm8gYWN0aXZpdGllcyBmb3VuZFxuIn19fSwiYWN0aXZpdHlTdGF0ZSI6eyJmaWxlIjoibGF1bmNoLWFjdGl2aXRpZXMudHh0IiwibGluZXMiOiJEaXNwbGF5ICMwIChhY3Rpdml0aWVzIGZyb20gdG9wIHRvIGJvdHRvbSk6XG4gICAgICB0b3BSZXN1bWVkQWN0aXZpdHk9QWN0aXZpdHlSZWNvcmR7NDA0MzQxMjMgdTAgY29tLmdvb2dsZS5hbmRyb2lkLnR2bGF1bmNoZXIvLk1haW5BY3Rpdml0eSB0NX1cbiAgICBtS2V5Z3VhcmREcmF3Q29tcGxldGU9dHJ1ZSBtV2luZG93TWFuYWdlckRyYXdDb21wbGV0ZT10cnVlXG4gICAgaXNLZXlndWFyZFNob3dpbmc9ZmFsc2VcbiAgS2V5Z3VhcmRDb250cm9sbGVyOlxuICAgIG1LZXlndWFyZFNob3dpbmc9ZmFsc2VcbiAgICBtS2V5Z3VhcmRHb2luZ0F3YXk9ZmFsc2VcbiAgIEtleWd1YXJkU2hvd2luZz1mYWxzZSBBb2RTaG93aW5nPWZhbHNlIEtleWd1YXJkR29pbmdBd2F5PWZhbHNlIERpc21pc3NhbFJlcXVlc3RlZD1mYWxzZSAgT2NjbHVkZWQ9ZmFsc2UgRGlzbWlzc2luZ0tleWd1YXJkQWN0aXZpdHk9bnVsbCBUdXJuU2NyZWVuT25BY3Rpdml0eT1udWxsIGF0IGRpc3BsYXk9MCJ9fSwic3RlcHMiOlt7Im5hbWUiOiJWZXJpZnkgZml4ZWQgb3JpZ2luYWwgQVBLIGNoZWNrc3VtIiwic3RhdHVzIjoicGFzc2VkIiwiZHVyYXRpb25NcyI6MjV9LHsibmFtZSI6IlZlcmlmeSBpbnN0YWxsZXItcHJvdmlkZWQgY29yZSBhcmNoaXZlcyBleGlzdCIsInN0YXR1cyI6InBhc3NlZCIsImR1cmF0aW9uTXMiOjF9LHsibmFtZSI6IkltcG9ydCBBUEsgd2l0aCBlbWJlZGRlZCBwYXJzZXIgYmVmb3JlIHJ1bnRpbWUgcHJlcGFyYXQiLCJzdGF0dXMiOiJwYXNzZWQiLCJkdXJhdGlvbk1zIjoyMDd9LHsibmFtZSI6IlJlY29yZCBmaXJzdC11c2UgbGljZW5zZSBhbmQgcHJlcGFyZSBtYW5hZ2VkIGVuZ2luZS9pbWEiLCJzdGF0dXMiOiJwYXNzZWQiLCJkdXJhdGlvbk1zIjo0MTQ1OH0seyJuYW1lIjoiQXV0b21hdGljYWxseSBib290IHByaXZhdGUgQVZEIGFuZCBpbnN0YWxsIEFQSyB0aHJvdWdoICIsInN0YXR1cyI6ImZhaWxlZCIsImR1cmF0aW9uTXMiOjYwMTUwfV0sImZhaWxlZEluc3RhbGxEZXZpY2VQcm9wZXJ0aWVzIjp7InJvLmJ1aWxkLnZlcnNpb24uc2RrIjp7ImFyZ3MiOlsic2hlbGwiLCJnZXRwcm9wIiwicm8uYnVpbGQudmVyc2lvbi5zZGsiXSwic3Rkb3V0IjoiMzZcbiJ9LCJyby5idWlsZC5maW5nZXJwcmludCI6eyJhcmdzIjpbInNoZWxsIiwiZ2V0cHJvcCIsInJvLmJ1aWxkLmZpbmdlcnByaW50Il0sInN0ZG91dCI6Imdvb2dsZS9zZGtfZ29vZ2xlX2F0djY0X3g4Nl82NC9lbXU2NHhhOjE2L0JUMkEuMjYwMzE5LjAwMS8xNTA1ODE3MDp1c2VyL2Rldi1rZXlzXG4ifSwicm8ucHJvZHVjdC5jcHUuYWJpbGlzdCI6eyJhcmdzIjpbInNoZWxsIiwiZ2V0cHJvcCIsInJvLnByb2R1Y3QuY3B1LmFiaWxpc3QiXSwic3Rkb3V0IjoieDg2XzY0LGFybTY0LXY4YVxuIn0sInJvLmRhbHZpay52bS5uYXRpdmUuYnJpZGdlIjp7ImFyZ3MiOlsic2hlbGwiLCJnZXRwcm9wIiwicm8uZGFsdmlrLnZtLm5hdGl2ZS5icmlkZ2UiXSwic3Rkb3V0IjoibGlibmRrX3RyYW5zbGF0aW9uLnNvXG4ifSwicm8uYnVpbGQuY2hhcmFjdGVyaXN0aWNzIjp7ImFyZ3MiOlsic2hlbGwiLCJnZXRwcm9wIiwicm8uYnVpbGQuY2hhcmFjdGVyaXN0aWNzIl0sInN0ZG91dCI6ImVtdWxhdG9yXG4ifX0sInByaXZhdGVTaHV0ZG93bldhdGNoZG9nV2FpdE1zIjoxMDIwLCJwcml2YXRlUHJvY2Vzc2VzQWZ0ZXJTaHV0ZG93biI6W10sImZ1bGxEaWFnbm9zdGljQXJ0aWZhY3QiOiJzdW1tYXJ5Lmpzb24ifQ==\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 423,
+    "start_column": null,
+    "end_line": 423,
+    "end_column": null,
+    "annotation_level": "notice",
+    "title": "Managed tv test stages",
+    "message": "{\"type\":\"probe-diagnostic-fragment\",\"diagnosticId\":\"Managed tv test stages:1794313079118\",\"title\":\"Managed tv test stages\",\"index\":0,\"total\":2,\"dataBase64Chunk\":\"eyJzdGF0dXMiOiJmYWlsZWQiLCJhcHBsaWNhdGlvbiI6ImVyZ2VkdW9kdW8iLCJzb3VyY2UiOiJodHRwczovL2dpdGh1Yi5jb20vZWNvanVzdC9wdXJlVFYvdHJlZS82YTJmODY1YWVmOTMwZWNlYTg2OGFkMTg1ZmJhNmFkNTlmODI0YjgwL2ZvcmsvZWR1Y2F0aW9uL2VyZ2VkdW9kdW8vIiwic2hhMjU2IjoiZjAyZTIwNTQ2MGRjNjhhZjNhODE2MWZlYjA0MjczN2IxNzViZWVhNjQwNzNkMDM1MDJmYjExM2UxNTVkZTZmNSIsInJlZmVyZW5jZU5vdGUiOiJPcmlnaW5hbCBBUk12Ny1vbmx5IGFyY2hpdmUuIFVzZXIgcmVwb3J0cyBJTlNUQUxMX0ZBSUxFRF9OT19NQVRDSElOR19BQklTIG9uIEFwcGxlIFNpbGljb24gVFY7IGluY29tcGF0aWJpbGl0eSByZW1haW5zIGEgZmFpbGVkIGluc3RhbGwsIG5ldmVyIGEgc2tpcHBlZCBvciBwYXNzaW5nIHN0YWdlLiIsIm9wdGlvbmFsUHJvYmVzIjp7ImtleWJvYXJkIjoibm90LWFwcGxpY2FibGUiLCJsb2dpbiI6Im5vdC1hcHBsaWNhYmxlIn0sImxhdW5jaERpYWdub3N0aWNzIjp7ImNhcHR1cmVkQXQiOiIyMDI2LTExLTEwVDEyOjE3OjQ5Ljg0M1oiLCJhcHBsaWNhdGlvbiI6ImVyZ2VkdW9kdW8iLCJzZXJpYWwiOiJlbXVsYXRvci01NTU0IiwiYXZkIjoiQVBLQ2hlY2tlcl9UVl8zNl94ODZfNjQiLCJwYWNrYWdlTmFtZSI6ImNvbS5kdW9kdW8uY2hpbGQuc3Rvcnk0dHYiLCJpZGVudGl0eSI6eyJhcmdzIjpbImVtdSIsImF2ZCIsIm5hbWUiXSwic3Rkb3V0IjoiQVBLQ2hlY2tlcl9UVl8zNl94ODZfNjRcclxuT0tcclxuIn0sImN1cnJlbnRVc2VyIjp7ImFyZ3MiOlsic2hlbGwiLCJhbSIsImdldC1jdXJyZW50LXVzZXIiXSwic3Rkb3V0IjoiMFxuIn0sInVzZXJVbmxvY2tlZCI6eyJhcmdzIjpbInNoZWxsIiwiY21kIiwidXNlciIsImlzLXVzZXItdW5sb2NrZWQiLCIwIl0sImVycm9yIjoiRXJyb3I6IGFkYjogVW5rbm93biBjb21tYW5kOiBpcy11c2VyLXVubG9ja2VkIn0sInVzZXJTdGF0ZSI6eyJhcmdzIjpbInNoZWxsIiwiYW0iLCJnZXQtc3RhcnRlZC11c2VyLXN0YXRlIiwiMCJdLCJzdGRvdXQiOiJSVU5OSU5HX1VOTE9DS0VEXG4ifSwicGFja2FnZXMiOnsiYXJncyI6WyJzaGVsbCIsInBtIiwibGlzdCIsInBhY2thZ2VzIiwiLS11c2VyIiwiMCIsImNvbS5kdW9kdW8uY2hpbGQuc3Rvcnk0dHYiXSwic3Rkb3V0IjoiIn0sImV4YWN0UGFja2FnZVByZXNlbnQiOmZhbHNlLCJsYXVuY2hlcnMiOnsiYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuTEFVTkNIRVIiOnsicmVzb2x2ZWQiOnsiYXJncyI6WyJzaGVsbCIsImNtZCIsInBhY2thZ2UiLCJyZXNvbHZlLWFjdGl2aXR5IiwiLS1icmllZiIsIi0tdXNlciIsIjAiLCItYSIsImFuZHJvaWQuaW50ZW50LmFjdGlvbi5NQUlOIiwiLWMiLCJhbmRyb2lkLmludGVudC5jYXRlZ29yeS5MQVVOQ0hFUiIsIi1wIiwiY29tLmR1b2R1by5jaGlsZC5zdG9yeTR0diJdLCJzdGRvdXQiOiJObyBhY3Rpdml0eSBmb3VuZFxuIn0sInF1ZXJpZWQiOnsiYXJncyI6WyJzaGVsbCIsImNtZCIsInBhY2thZ2UiLCJxdWVyeS1hY3Rpdml0aWVzIiwiLS1icmllZiIsIi0tdXNlciIsIjAiLCItYSIsImFuZHJvaWQuaW50ZW50LmFjdGlvbi5NQUlOIiwiLWMiLCJhbmRyb2lkLmludGVudC5jYXRlZ29yeS5MQVVOQ0hFUiIsIi1wIiwiY29tLmR1b2R1by5jaGlsZC5zdG9yeTR0diJdLCJzdGRvdXQiOiJObyBhY3Rpdml0aWVzIGZvdW5kXG4ifX0sImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5LkxFQU5CQUNLX0xBVU5DSEVSIjp7InJlc29sdmVkIjp7ImFyZ3MiOlsic2hlbGwiLCJjbWQiLCJwYWNrYWdlIiwicmVzb2x2ZS1hY3Rpdml0eSIsIi0tYnJpZWYiLCItLXVzZXIiLCIwIiwiLWEiLCJhbmRyb2lkLmludGVudC5hY3Rpb24uTUFJTiIsIi1jIiwiYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuTEVBTkJBQ0tfTEFVTkNIRVIiLCItcCIsImNvbS5kdW9kdW8uY2hpbGQuc3Rvcnk0dHYiXSwic3Rkb3V0IjoiTm8gYWN0aXZpdHkgZm91bmRcbiJ9LCJxdWVyaWVkIjp7ImFyZ3MiOlsic2hlbGwiLCJjbWQiLCJwYWNrYWdlIiwicXVlcnktYWN0aXZpdGllcyIsIi0tYnJpZWYiLCItLXVzZXIiLCIwIiwiLWEiLCJhbmRyb2lkLmludGVudC5hY3Rpb24uTUFJ\"}",
+    "raw_details": ""
+  },
+  {
+    "path": ".github",
+    "blob_href": "https://github.com/ecojust/apk-checker/blob/d864145a7637a6501e7e282b48d599364d771410/.github",
+    "start_line": 39,
+    "start_column": null,
+    "end_line": 39,
+    "end_column": null,
+    "annotation_level": "failure",
+    "title": "Managed APK smoke test",
+    "message": "stdout:\nPerforming Streamed Install\nstderr:\nadb: failed to install /tmp/apk-checker-managed-smoke-4yDf7P/library/apks/f02e205460dc68af3a8161feb042737b175beea64073d03502fb113e155de6f5.apk: Failure [INSTALL_FAILED_NO_MATCHING_ABIS: INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]\n退出代码：1\nCommand failed: /tmp/apk-checker-managed-smoke-4yDf7P/managed-runtime/sdk/platform-tools/adb -s emulator-5554 install --user 0 -r /tmp/apk-checker-managed-smoke-4yDf7P/library/apks/f02e205460dc68af3a8161feb042737b175beea64073d03502fb113e155de6f5.apk\nadb: failed to install /tmp/apk-checker-managed-smoke-4yDf7P/library/apks/f02e205460dc68af3a8161feb042737b175beea64073d03502fb113e155de6f5.apk: Failure [INSTALL_FAILED_NO_MATCHING_ABIS: INSTALL_FAILED_NO_MATCHING_ABIS: Failed to extract native libraries, res=-113]\n\n",
+    "raw_details": ""
+  }
+]

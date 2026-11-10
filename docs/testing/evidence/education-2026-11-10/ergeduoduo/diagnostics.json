@@ -1,0 +1,234 @@
+[
+  {
+    "title": "Managed tv crash buffer",
+    "data": {
+      "file": "logcat-crash.txt",
+      "text": "",
+      "truncated": false,
+      "packageName": "com.duoduo.child.story4tv"
+    }
+  },
+  {
+    "title": "Managed tv test stages",
+    "data": {
+      "status": "failed",
+      "application": "ergeduoduo",
+      "source": "https://github.com/ecojust/pureTV/tree/6a2f865aef930ecea868ad185fba6ad59f824b80/fork/education/ergeduoduo/",
+      "sha256": "f02e205460dc68af3a8161feb042737b175beea64073d03502fb113e155de6f5",
+      "referenceNote": "Original ARMv7-only archive. User reports INSTALL_FAILED_NO_MATCHING_ABIS on Apple Silicon TV; incompatibility remains a failed install, never a skipped or passing stage.",
+      "optionalProbes": {
+        "keyboard": "not-applicable",
+        "login": "not-applicable"
+      },
+      "launchDiagnostics": {
+        "capturedAt": "2026-11-10T12:17:49.843Z",
+        "application": "ergeduoduo",
+        "serial": "emulator-5554",
+        "avd": "APKChecker_TV_36_x86_64",
+        "packageName": "com.duoduo.child.story4tv",
+        "identity": {
+          "args": [
+            "emu",
+            "avd",
+            "name"
+          ],
+          "stdout": "APKChecker_TV_36_x86_64\r\nOK\r\n"
+        },
+        "currentUser": {
+          "args": [
+            "shell",
+            "am",
+            "get-current-user"
+          ],
+          "stdout": "0\n"
+        },
+        "userUnlocked": {
+          "args": [
+            "shell",
+            "cmd",
+            "user",
+            "is-user-unlocked",
+            "0"
+          ],
+          "error": "Error: adb: Unknown command: is-user-unlocked"
+        },
+        "userState": {
+          "args": [
+            "shell",
+            "am",
+            "get-started-user-state",
+            "0"
+          ],
+          "stdout": "RUNNING_UNLOCKED\n"
+        },
+        "packages": {
+          "args": [
+            "shell",
+            "pm",
+            "list",
+            "packages",
+            "--user",
+            "0",
+            "com.duoduo.child.story4tv"
+          ],
+          "stdout": ""
+        },
+        "exactPackagePresent": false,
+        "launchers": {
+          "android.intent.category.LAUNCHER": {
+            "resolved": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                "com.duoduo.child.story4tv"
+              ],
+              "stdout": "No activity found\n"
+            },
+            "queried": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "query-activities",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "-p",
+                "com.duoduo.child.story4tv"
+              ],
+              "stdout": "No activities found\n"
+            }
+          },
+          "android.intent.category.LEANBACK_LAUNCHER": {
+            "resolved": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LEANBACK_LAUNCHER",
+                "-p",
+                "com.duoduo.child.story4tv"
+              ],
+              "stdout": "No activity found\n"
+            },
+            "queried": {
+              "args": [
+                "shell",
+                "cmd",
+                "package",
+                "query-activities",
+                "--brief",
+                "--user",
+                "0",
+                "-a",
+                "android.intent.action.MAIN",
+                "-c",
+                "android.intent.category.LEANBACK_LAUNCHER",
+                "-p",
+                "com.duoduo.child.story4tv"
+              ],
+              "stdout": "No activities found\n"
+            }
+          }
+        },
+        "activityState": {
+          "file": "launch-activities.txt",
+          "lines": "Display #0 (activities from top to bottom):\n      topResumedActivity=ActivityRecord{40434123 u0 com.google.android.tvlauncher/.MainActivity t5}\n    mKeyguardDrawComplete=true mWindowManagerDrawComplete=true\n    isKeyguardShowing=false\n  KeyguardController:\n    mKeyguardShowing=false\n    mKeyguardGoingAway=false\n   KeyguardShowing=false AodShowing=false KeyguardGoingAway=false DismissalRequested=false  Occluded=false DismissingKeyguardActivity=null TurnScreenOnActivity=null at display=0"
+        }
+      },
+      "steps": [
+        {
+          "name": "Verify fixed original APK checksum",
+          "status": "passed",
+          "durationMs": 25
+        },
+        {
+          "name": "Verify installer-provided core archives exist",
+          "status": "passed",
+          "durationMs": 1
+        },
+        {
+          "name": "Import APK with embedded parser before runtime preparat",
+          "status": "passed",
+          "durationMs": 207
+        },
+        {
+          "name": "Record first-use license and prepare managed engine/ima",
+          "status": "passed",
+          "durationMs": 41458
+        },
+        {
+          "name": "Automatically boot private AVD and install APK through ",
+          "status": "failed",
+          "durationMs": 60150
+        }
+      ],
+      "failedInstallDeviceProperties": {
+        "ro.build.version.sdk": {
+          "args": [
+            "shell",
+            "getprop",
+            "ro.build.version.sdk"
+          ],
+          "stdout": "36\n"
+        },
+        "ro.build.fingerprint": {
+          "args": [
+            "shell",
+            "getprop",
+            "ro.build.fingerprint"
+          ],
+          "stdout": "google/sdk_google_atv64_x86_64/emu64xa:16/BT2A.260319.001/15058170:user/dev-keys\n"
+        },
+        "ro.product.cpu.abilist": {
+          "args": [
+            "shell",
+            "getprop",
+            "ro.product.cpu.abilist"
+          ],
+          "stdout": "x86_64,arm64-v8a\n"
+        },
+        "ro.dalvik.vm.native.bridge": {
+          "args": [
+            "shell",
+            "getprop",
+            "ro.dalvik.vm.native.bridge"
+          ],
+          "stdout": "libndk_translation.so\n"
+        },
+        "ro.build.characteristics": {
+          "args": [
+            "shell",
+            "getprop",
+            "ro.build.characteristics"
+          ],
+          "stdout": "emulator\n"
+        }
+      },
+      "privateShutdownWatchdogWaitMs": 1020,
+      "privateProcessesAfterShutdown": [],
+      "fullDiagnosticArtifact": "summary.json"
+    }
+  }
+]
